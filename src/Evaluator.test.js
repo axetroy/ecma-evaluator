@@ -772,7 +772,7 @@ describe("Security and Restrictions", () => {
 		});
 
 		test("should block unsupported syntax", () => {
-			assert.throws(() => evaluator.evaluate("with (obj) { foo }"), { message: "'with (obj) { foo }' is not a valid syntax" });
+			assert.throws(() => evaluator.evaluate("with (obj) { foo }"), { message: "'with' statement is not allowed" });
 		});
 
 		test("should block setTimeout with string", () => {

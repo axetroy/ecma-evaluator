@@ -14,6 +14,7 @@ const ERROR_MESSAGES = {
 	THIS_NOT_ALLOWED: "'this' keyword is not allowed",
 	NOT_A_VALID_SYNTAX: "is not a valid syntax",
 	ACCESSING_PROTOTYPE_NOT_ALLOWED: "Accessing prototype properties is not allowed",
+	WITH_NOT_ALLOWED: "'with' statement is not allowed",
 };
 
 const BINARY_OPERATION_MAP = {
@@ -235,6 +236,9 @@ export class Evaluator {
 			}
 			case "ThisExpression": {
 				throw new Error(ERROR_MESSAGES.THIS_NOT_ALLOWED);
+			}
+			case "WithStatement": {
+				throw new Error(ERROR_MESSAGES.WITH_NOT_ALLOWED);
 			}
 			default: {
 				let content = this.source.slice(node.start, node.end);
