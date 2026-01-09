@@ -779,32 +779,34 @@ describe("Security and Restrictions", () => {
 			assert.throws(() => evaluator.evaluate("setTimeout('alert(\"Hi\")', 1000 )"), { message: "setTimeout is not defined" });
 		});
 
-		test("should block Object constructor", () => {
-			assert.throws(() => evaluator.evaluate("({}).constructor.constructor('return this')()"), {
-				message: "Function constructor is not allowed",
-			});
+		test("should block Function constructor", () => {
+			const fixtures = [
+				"({}).constructor.constructor('return this')()",
+				"([]).constructor.constructor('return this')()",
+				// "(function() {}).constructor.constructor('return this')()",
+				"(new Date()).constructor.constructor('return this')()",
+				"(new RegExp('')).constructor.constructor('return this')()",
+				"(new Map()).constructor.constructor('return this')()",
+				"(new Set()).constructor.constructor('return this')()",
+				"(new WeakMap()).constructor.constructor('return this')()",
+				"(new WeakSet()).constructor.constructor('return this')()",
+				"(new Int8Array()).constructor.constructor('return this')()",
+				"(new Uint8Array()).constructor.constructor('return this')()",
+				"(new Uint8ClampedArray()).constructor.constructor('return this')()",
+				"(new Int16Array()).constructor.constructor('return this')()",
+				"(new Uint16Array()).constructor.constructor('return this')()",
+				"(new Int32Array()).constructor.constructor('return this')()",
+				"(new Uint32Array()).constructor.constructor('return this')()",
+				"(new Float32Array()).constructor.constructor('return this')()",
+				"(new Float64Array()).constructor.constructor('return this')()",
+				"new String().constructor.constructor('return this')()",
+				"new Number().constructor.constructor('return this')()",
+				"new Boolean().constructor.constructor('return this')()",
+			];
 
-			assert.throws(() => evaluator.evaluate("Object.constructor('return this')()"), {
-				message: "Function constructor is not allowed",
-			});
-
-			assert.throws(() => evaluator.evaluate("new Object().constructor.constructor('return this')()"), {
-				message: "Function constructor is not allowed",
-			});
-		});
-
-		test("should block Array constructor", () => {
-			assert.throws(() => evaluator.evaluate("([]).constructor.constructor('return this')()"), {
-				message: "Function constructor is not allowed",
-			});
-
-			assert.throws(() => evaluator.evaluate("Array.constructor('return this')()"), {
-				message: "Function constructor is not allowed",
-			});
-
-			assert.throws(() => evaluator.evaluate("new Array().constructor.constructor('return this')()"), {
-				message: "Function constructor is not allowed",
-			});
+			for (const code of fixtures) {
+				assert.throws(() => evaluator.evaluate(code), { message: "Function constructor is not allowed" });
+			}
 		});
 
 		test("should block accessing prototype properties", () => {
