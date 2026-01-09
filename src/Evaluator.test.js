@@ -814,6 +814,16 @@ describe("Security and Restrictions", () => {
 				message: "Accessing prototype properties is not allowed",
 			});
 		});
+
+		test("should block argument because the FunctionExpression is disallowed", () => {
+			assert.throws(() => evaluator.evaluate("((function() { return arguments; })())"), {
+				message: "'function() { retu...' is not a valid syntax",
+			});
+
+			assert.throws(() => evaluator.evaluate("(() => arguments)()"), {
+				message: "arguments is not defined",
+			});
+		});
 	});
 });
 
