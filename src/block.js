@@ -1,4 +1,4 @@
-export const mutableMethods = [
+const mutableMethods = [
 	"Array.prototype.push",
 	"Array.prototype.pop",
 	"Array.prototype.shift",
@@ -160,4 +160,31 @@ export const mutableMethods = [
 	"Headers.prototype.append",
 	"Headers.prototype.delete",
 	"Headers.prototype.set",
+];
+
+const dangerousMethods = ["Object.getPrototypeOf"];
+
+/**
+ * List of methods to block due to mutability or dangerousness
+ */
+export const blockedMethods = [...mutableMethods, ...dangerousMethods];
+
+/**
+ * List of global built-ins to block entirely
+ */
+export const blockedGlobalBuiltIns = [
+	"Function",
+	"GeneratorFunction",
+	"AsyncFunction",
+	"AsyncGeneratorFunction",
+	"eval",
+	"setTimeout",
+	"setInterval",
+	"setImmediate",
+	"XMLHttpRequest",
+	"fetch",
+	"WebSocket",
+	"Proxy",
+	"globalThis",
+	"Reflect",
 ];

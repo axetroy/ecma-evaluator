@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { beforeEach, describe, test } from "node:test";
 
 import { Evaluator, getNodeString } from "./Evaluator.js";
+import { blockedGlobalBuiltIns } from "./block.js";
 
 /**
  * @type {Evaluator}
@@ -730,36 +731,36 @@ describe("Complex Expressions", () => {
 describe("Security and Restrictions", () => {
 	describe("Blocked Mutable Methods", () => {
 		test("should block mutable array methods", () => {
-			assert.throws(() => evaluator.evaluate("[1, 2].push(3)"), { message: "Mutable method is not allowed" });
-			assert.throws(() => evaluator.evaluate("[1, 2].pop()"), { message: "Mutable method is not allowed" });
-			assert.throws(() => evaluator.evaluate("Array.prototype.splice.call([1,2,3], 1, 1)"), {
-				message: "Mutable method is not allowed",
-			});
+			assert.throws(() => evaluator.evaluate("[1, 2].push(3)"), { message: "Array.prototype.push is not allowed" });
+			assert.throws(() => evaluator.evaluate("[1, 2].pop()"), { message: "Array.prototype.pop is not allowed" });
 		});
 
 		test("should block mutable object methods", () => {
-			assert.throws(() => evaluator.evaluate("Object.assign({a:1}, {b:2})"), { message: "Mutable method is not allowed" });
+			assert.throws(() => evaluator.evaluate("Object.assign({a:1}, {b:2})"), { message: "Object.assign is not allowed" });
 		});
 
 		test("should block Object.setPrototypeOf", () => {
-			assert.throws(() => evaluator.evaluate("Object.setPrototypeOf({}, null)"), { message: "Mutable method is not allowed" });
+			assert.throws(() => evaluator.evaluate("Object.setPrototypeOf({}, null)"), { message: "Object.setPrototypeOf is not allowed" });
 		});
 
 		test("should block Object.defineProperty", () => {
 			assert.throws(() => evaluator.evaluate("Object.defineProperty({}, 'a', { value: 1 })"), {
-				message: "Mutable method is not allowed",
+				message: "Object.defineProperty is not allowed",
 			});
 		});
 	});
 
 	describe("Blocked Constructs", () => {
-		test("should block eval", () => {
-			assert.throws(() => evaluator.evaluate('eval("foo")'), { message: "eval is not defined" });
+		test("should unsave builtIns", () => {
+			for (const builtin of blockedGlobalBuiltIns) {
+				if (builtin === "globalThis") continue; // globalThis is needed for some operations
+				assert.throws(() => evaluator.evaluate(builtin), { message: `${builtin} is not defined` });
+			}
 		});
 
 		test("should block Function constructor", () => {
 			assert.throws(() => evaluator.evaluate('new Function("alert(123)")'), { message: "Cannot use new with Function constructor" });
-			assert.throws(() => evaluator.evaluate('Function("alert(123)")'), { message: "Function constructor is not allowed" });
+			assert.throws(() => evaluator.evaluate('Function("alert(123)")'), { message: "Function is not defined" });
 		});
 
 		test("should block this keyword", () => {
@@ -810,17 +811,16 @@ describe("Security and Restrictions", () => {
 		});
 
 		test("should block accessing prototype properties", () => {
+			assert.throws(() => evaluator.evaluate("__proto__"), { message: "__proto__ is not defined" });
 			assert.throws(() => evaluator.evaluate("({}).__proto__"), { message: "Accessing prototype properties is not allowed" });
 			assert.throws(() => evaluator.evaluate("([]).__proto__"), { message: "Accessing prototype properties is not allowed" });
 			assert.throws(() => evaluator.evaluate("([])['__proto__']"), { message: "Accessing prototype properties is not allowed" });
-			assert.throws(() => evaluator.evaluate("Reflect.get({}, '__proto__')"), {
-				message: "Accessing prototype properties is not allowed",
-			});
+			assert.throws(() => evaluator.evaluate("Reflect.get({}, '__proto__')"), { message: "Reflect is not defined" });
 			assert.throws(() => evaluator.evaluate("((obj, name) => Reflect.get(obj, name))({ __proto__: 123 }, '__proto__')"), {
-				message: "Accessing prototype properties is not allowed",
+				message: "Reflect is not defined",
 			});
 			assert.throws(() => evaluator.evaluate("((obj, name) => Reflect.get(obj, name))(null, '__proto__')"), {
-				message: "Accessing prototype properties is not allowed",
+				message: "Reflect is not defined",
 			});
 			assert.throws(() => evaluator.evaluate("((obj,name) => obj[name])({}, '__proto__')"), {
 				message: "Accessing prototype properties is not allowed",

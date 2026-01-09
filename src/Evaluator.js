@@ -1,11 +1,10 @@
 import * as acorn from "acorn";
 import globals from "globals";
-import { mutableMethods } from "./mutableMethods.js";
+import { blockedGlobalBuiltIns, blockedMethods } from "./block.js";
 
 // Error message constants for better maintainability
 const ERROR_MESSAGES = {
 	DELETE_NOT_SUPPORTED: "Delete operator is not allow",
-	MUTABLE_METHOD: "Mutable method is not allowed",
 	NEW_FUNCTION_NOT_ALLOWED: "Cannot use new with Function constructor",
 	NOT_A_FUNCTION: "is not a function",
 	PROPERTY_READ_ERROR: "Cannot read property",
@@ -16,6 +15,7 @@ const ERROR_MESSAGES = {
 	ACCESSING_PROTOTYPE_NOT_ALLOWED: "Accessing prototype properties is not allowed",
 	WITH_NOT_ALLOWED: "'with' statement is not allowed",
 	FUNCTION_EXPRESSION_NOT_ALLOWED: "Function expressions are not allowed",
+	METHOD_NOT_ALLOWED: "is not allowed",
 };
 
 const BINARY_OPERATION_MAP = {
@@ -47,18 +47,21 @@ function createGlobalScope() {
 	const scope = Object.create(null);
 	const { builtin } = globals;
 
-	Object.keys(builtin).forEach((key) => {
-		if (key in globalThis && key !== "eval" && key !== "globalThis") {
-			const isWritable = builtin[key];
-
-			Object.defineProperty(scope, key, {
-				value: globalThis[key],
-				writable: isWritable,
-				enumerable: false,
-				configurable: false,
-			});
+	for (const key in builtin) {
+		if (blockedGlobalBuiltIns.includes(key)) {
+			continue;
 		}
-	});
+
+		/** @type {boolean} */
+		const isWritable = builtin[key];
+
+		Object.defineProperty(scope, key, {
+			value: globalThis[key],
+			writable: isWritable,
+			enumerable: false,
+			configurable: false,
+		});
+	}
 
 	Object.defineProperty(scope, "globalThis", {
 		value: scope,
@@ -70,15 +73,17 @@ function createGlobalScope() {
 	return scope;
 }
 
-/** @type {() => Set<Function>} */
-const getMutableMethods = (() => {
-	let MUTABLE_METHODS = null;
+const getBlockedMethods = (() => {
+	/**
+	 * @type {Map<Function, string>}
+	 */
+	let BLOCKED_METHODS = null;
 
 	return () => {
-		if (MUTABLE_METHODS) return MUTABLE_METHODS;
+		if (BLOCKED_METHODS) return BLOCKED_METHODS;
 
-		const set = new Set();
-		for (const path of mutableMethods) {
+		const map = new Map();
+		for (const path of blockedMethods) {
 			const [object, ...properties] = path.split(".");
 			let current = globalThis[object];
 			for (const prop of properties) {
@@ -89,10 +94,11 @@ const getMutableMethods = (() => {
 					break;
 				}
 			}
-			if (typeof current === "function") set.add(current);
+			if (typeof current === "function") map.set(current, path);
 		}
-		MUTABLE_METHODS = set;
-		return MUTABLE_METHODS;
+		BLOCKED_METHODS = map;
+
+		return BLOCKED_METHODS;
 	};
 })();
 
@@ -444,14 +450,6 @@ export class Evaluator {
 	 * @private
 	 */
 	handleCallExpression(node) {
-		// 移除对 callee.object 的冗余检查，避免重复求值与错误集合匹配
-		if (node.callee.type === "MemberExpression") {
-			const object = this.visit(node.callee.object);
-			if (getMutableMethods().has(object)) {
-				throw new Error(ERROR_MESSAGES.MUTABLE_METHOD);
-			}
-		}
-
 		const calledString = getNodeString(node.callee);
 
 		const func = this.visit(node.callee);
@@ -466,6 +464,11 @@ export class Evaluator {
 
 		if (func === Function) {
 			throw new Error(ERROR_MESSAGES.FUNCTION_CONSTRUCTOR_NOT_ALLOWED);
+		}
+
+		if (getBlockedMethods().has(func)) {
+			const path = getBlockedMethods().get(func);
+			throw new Error(`${path} ${ERROR_MESSAGES.METHOD_NOT_ALLOWED}`);
 		}
 
 		// 仅在存在参数时构建数组
@@ -490,16 +493,7 @@ export class Evaluator {
 			return result;
 		})();
 
-		if (getMutableMethods().has(func)) {
-			throw new Error(ERROR_MESSAGES.MUTABLE_METHOD);
-		}
-
 		const target = node.callee.type === "MemberExpression" ? this.visit(node.callee.object) : null;
-
-		// Prevent accessing __proto__ via Reflect.get or similar methods
-		if (typeof Reflect !== "undefined" && func === Reflect.get && args.length >= 2 && args[1] === "__proto__") {
-			throw new Error(ERROR_MESSAGES.ACCESSING_PROTOTYPE_NOT_ALLOWED);
-		}
 
 		return func.apply(target, args);
 	}
