@@ -350,6 +350,7 @@ evalExpression("new Map([['a', 1], ['b', 2]])"); // Map {"a" => 1, "b" => 2}
 4. **有限的全局作用域** - 只有安全的内置对象可用（Math、JSON、Array、Object 等）
 5. **无文件系统或网络访问** - 无法访问 Node.js API 或执行 I/O 操作
 6. **无法访问进程或全局变量** - 无法访问 `process`、`global`、`require` 等
+7. **防止原型污染** - 阻止访问原型属性（例如，`__proto__`）
 
 ### 安全的内置对象
 

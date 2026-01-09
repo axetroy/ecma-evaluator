@@ -13,6 +13,7 @@ const ERROR_MESSAGES = {
 	FUNCTION_CONSTRUCTOR_NOT_ALLOWED: "Function constructor is not allowed",
 	THIS_NOT_ALLOWED: "'this' keyword is not allowed",
 	NOT_A_VALID_SYNTAX: "is not a valid syntax",
+	ACCESSING_PROTOTYPE_NOT_ALLOWED: "Accessing prototype properties is not allowed",
 };
 
 const BINARY_OPERATION_MAP = {
@@ -342,6 +343,11 @@ export class Evaluator {
 	 * @private
 	 */
 	handleMemberExpression(node) {
+		// Prevent access to prototype properties
+		if (node.property.type === "Identifier" && node.property.name === "__proto__") {
+			throw new Error(ERROR_MESSAGES.ACCESSING_PROTOTYPE_NOT_ALLOWED);
+		}
+
 		const object = this.visit(node.object);
 
 		// Determine property name: either identifier name or computed value

@@ -740,6 +740,16 @@ describe("Security and Restrictions", () => {
 		test("should block mutable object methods", () => {
 			assert.throws(() => evaluator.evaluate("Object.assign({a:1}, {b:2})"), { message: "Mutable method is not allowed" });
 		});
+
+		test("should block Object.setPrototypeOf", () => {
+			assert.throws(() => evaluator.evaluate("Object.setPrototypeOf({}, null)"), { message: "Mutable method is not allowed" });
+		});
+
+		test("should block Object.defineProperty", () => {
+			assert.throws(() => evaluator.evaluate("Object.defineProperty({}, 'a', { value: 1 })"), {
+				message: "Mutable method is not allowed",
+			});
+		});
 	});
 
 	describe("Blocked Constructs", () => {
@@ -794,6 +804,14 @@ describe("Security and Restrictions", () => {
 
 			assert.throws(() => evaluator.evaluate("new Array().constructor.constructor('return this')()"), {
 				message: "Function constructor is not allowed",
+			});
+		});
+
+		test("should block accessing prototype properties", () => {
+			assert.throws(() => evaluator.evaluate("({}).__proto__"), { message: "Accessing prototype properties is not allowed" });
+			assert.throws(() => evaluator.evaluate("([]).__proto__"), { message: "Accessing prototype properties is not allowed" });
+			assert.throws(() => evaluator.evaluate("(function(){}).__proto__"), {
+				message: "Accessing prototype properties is not allowed",
 			});
 		});
 	});

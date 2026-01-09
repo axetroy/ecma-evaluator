@@ -350,6 +350,7 @@ evalExpression("new Map([['a', 1], ['b', 2]])"); // Map {"a" => 1, "b" => 2}
 4. **Limited global scope** - Only safe built-in objects are available (Math, JSON, Array, Object, etc.)
 5. **No file system or network access** - Cannot access Node.js APIs or perform I/O operations
 6. **No access to process or global variables** - Cannot access `process`, `global`, `require`, etc.
+7. **Prevention of prototype pollution** - Accessing prototype properties (e.g., `__proto__`) is blocked
 
 ### Safe Built-in Objects
 
