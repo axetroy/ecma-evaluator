@@ -495,6 +495,12 @@ export class Evaluator {
 		}
 
 		const target = node.callee.type === "MemberExpression" ? this.visit(node.callee.object) : null;
+
+		// Prevent accessing __proto__ via Reflect.get or similar methods
+		if (typeof Reflect !== "undefined" && func === Reflect.get && args.length >= 2 && args[1] === "__proto__") {
+			throw new Error(ERROR_MESSAGES.ACCESSING_PROTOTYPE_NOT_ALLOWED);
+		}
+
 		return func.apply(target, args);
 	}
 
