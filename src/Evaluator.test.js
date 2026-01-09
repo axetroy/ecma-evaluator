@@ -817,7 +817,7 @@ describe("Security and Restrictions", () => {
 
 		test("should block argument because the FunctionExpression is disallowed", () => {
 			assert.throws(() => evaluator.evaluate("((function() { return arguments; })())"), {
-				message: "'function() { retu...' is not a valid syntax",
+				message: "Function expressions are not allowed",
 			});
 
 			assert.throws(() => evaluator.evaluate("(() => arguments)()"), {

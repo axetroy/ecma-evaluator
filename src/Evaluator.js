@@ -15,6 +15,7 @@ const ERROR_MESSAGES = {
 	NOT_A_VALID_SYNTAX: "is not a valid syntax",
 	ACCESSING_PROTOTYPE_NOT_ALLOWED: "Accessing prototype properties is not allowed",
 	WITH_NOT_ALLOWED: "'with' statement is not allowed",
+	FUNCTION_EXPRESSION_NOT_ALLOWED: "Function expressions are not allowed",
 };
 
 const BINARY_OPERATION_MAP = {
@@ -202,6 +203,9 @@ export class Evaluator {
 			}
 			case "ObjectExpression": {
 				return this.handleObjectExpression(node);
+			}
+			case "FunctionExpression": {
+				throw new Error(ERROR_MESSAGES.FUNCTION_EXPRESSION_NOT_ALLOWED);
 			}
 			case "ArrowFunctionExpression": {
 				return this.handleArrowFunctionExpression(node);
