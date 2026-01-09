@@ -768,6 +768,34 @@ describe("Security and Restrictions", () => {
 		test("should block setTimeout with string", () => {
 			assert.throws(() => evaluator.evaluate("setTimeout('alert(\"Hi\")', 1000 )"), { message: "setTimeout is not defined" });
 		});
+
+		test("should block Object constructor", () => {
+			assert.throws(() => evaluator.evaluate("({}).constructor.constructor('return this')()"), {
+				message: "Function constructor is not allowed",
+			});
+
+			assert.throws(() => evaluator.evaluate("Object.constructor('return this')()"), {
+				message: "Function constructor is not allowed",
+			});
+
+			assert.throws(() => evaluator.evaluate("new Object().constructor.constructor('return this')()"), {
+				message: "Function constructor is not allowed",
+			});
+		});
+
+		test("should block Array constructor", () => {
+			assert.throws(() => evaluator.evaluate("([]).constructor.constructor('return this')()"), {
+				message: "Function constructor is not allowed",
+			});
+
+			assert.throws(() => evaluator.evaluate("Array.constructor('return this')()"), {
+				message: "Function constructor is not allowed",
+			});
+
+			assert.throws(() => evaluator.evaluate("new Array().constructor.constructor('return this')()"), {
+				message: "Function constructor is not allowed",
+			});
+		});
 	});
 });
 
