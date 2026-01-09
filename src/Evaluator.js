@@ -351,16 +351,16 @@ export class Evaluator {
 	 * @private
 	 */
 	handleMemberExpression(node) {
-		// Prevent access to prototype properties
-		if (node.property.type === "Identifier" && node.property.name === "__proto__") {
-			throw new Error(ERROR_MESSAGES.ACCESSING_PROTOTYPE_NOT_ALLOWED);
-		}
-
 		const object = this.visit(node.object);
 
 		// Determine property name: either identifier name or computed value
 		const isStaticProperty = node.property.type === "Identifier" && !node.computed;
 		const property = isStaticProperty ? node.property.name : this.visit(node.property);
+
+		// Prevent access to prototype properties
+		if (typeof object !== "undefined" && object !== null && object[property] === object?.__proto__) {
+			throw new Error(ERROR_MESSAGES.ACCESSING_PROTOTYPE_NOT_ALLOWED);
+		}
 
 		if (object === null || object === undefined) {
 			// optional chaining

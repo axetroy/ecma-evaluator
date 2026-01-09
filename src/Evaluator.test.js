@@ -810,7 +810,11 @@ describe("Security and Restrictions", () => {
 		test("should block accessing prototype properties", () => {
 			assert.throws(() => evaluator.evaluate("({}).__proto__"), { message: "Accessing prototype properties is not allowed" });
 			assert.throws(() => evaluator.evaluate("([]).__proto__"), { message: "Accessing prototype properties is not allowed" });
-			assert.throws(() => evaluator.evaluate("(function(){}).__proto__"), {
+			assert.throws(() => evaluator.evaluate("([])['__proto__']"), { message: "Accessing prototype properties is not allowed" });
+			assert.throws(() => evaluator.evaluate("((obj,name) => obj[name])({}, '__proto__')"), {
+				message: "Accessing prototype properties is not allowed",
+			});
+			assert.throws(() => evaluator.evaluate("((obj,name) => obj[name])({__proto__: 123}, '__proto__')"), {
 				message: "Accessing prototype properties is not allowed",
 			});
 		});
