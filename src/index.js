@@ -28,21 +28,27 @@ export function evalExpression(expression, context) {
 export function evalTemplate(template, context, templateParserOptions) {
 	let result = "";
 
-	for (const token of TemplateParser.parse(template, templateParserOptions)) {
-		if (token.type === "text") {
-			result += token.value;
-		} else if (token.type === "expression") {
+	const typeHandler = {
+		text: (token) => token.value,
+		expression: (token) => {
 			try {
-				result += Evaluator.evaluate(token.value, context);
+				return Evaluator.evaluate(token.value, context);
 			} catch (error) {
 				// Replace undefined variables with empty string for graceful degradation
 				if (error instanceof ReferenceError && error.message.endsWith("is not defined")) {
-					result += "undefined";
+					return "undefined";
 				} else {
 					throw error;
 				}
 			}
-		}
+		},
+	};
+
+	for (const token of TemplateParser.parse(template, templateParserOptions)) {
+		// Unknown token type, treat as text
+		const handler = typeHandler[token.type] ?? typeHandler["text"];
+
+		result += handler(token);
 	}
 
 	return result;
