@@ -215,7 +215,7 @@ export class Evaluator {
 				return this.handleObjectExpression(node);
 			}
 			case "FunctionExpression": {
-				throw new Error(renderErrorMessage(ERROR_MESSAGES.IS_NOT_ALLOWED, ["Function expression"]));
+				throw new SyntaxError(renderErrorMessage(ERROR_MESSAGES.IS_NOT_ALLOWED, ["Function expression"]));
 			}
 			case "ArrowFunctionExpression": {
 				return this.handleArrowFunctionExpression(node);
@@ -249,10 +249,10 @@ export class Evaluator {
 				return this.handleTemplateLiteral(node);
 			}
 			case "ThisExpression": {
-				throw new Error(renderErrorMessage(ERROR_MESSAGES.IS_NOT_ALLOWED, ["'this' expression"]));
+				throw new SyntaxError(renderErrorMessage(ERROR_MESSAGES.IS_NOT_ALLOWED, ["'this' expression"]));
 			}
 			case "WithStatement": {
-				throw new Error(renderErrorMessage(ERROR_MESSAGES.IS_NOT_ALLOWED, ["'with' statement"]));
+				throw new SyntaxError(renderErrorMessage(ERROR_MESSAGES.IS_NOT_ALLOWED, ["'with' statement"]));
 			}
 			default: {
 				let content = this.source.slice(node.start, node.end);
@@ -261,7 +261,7 @@ export class Evaluator {
 					content = content.slice(0, 17) + "...";
 				}
 
-				throw new Error(`'${content}'` + " " + renderErrorMessage(ERROR_MESSAGES.IS_NOT_VALID_SYNTAX, [content]));
+				throw new SyntaxError(`'${content}'` + " " + renderErrorMessage(ERROR_MESSAGES.IS_NOT_VALID_SYNTAX, [content]));
 			}
 		}
 	}
@@ -280,7 +280,7 @@ export class Evaluator {
 			return BINARY_OPERATION_MAP[op](left, right);
 		}
 
-		throw new Error(`Unsupported operator: ${node.operator}`);
+		throw new SyntaxError(`Unsupported operator: ${node.operator}`);
 	}
 
 	/**
@@ -303,7 +303,7 @@ export class Evaluator {
 				return left !== null && left !== undefined ? left : this.visit(node.right);
 			}
 			default: {
-				throw new Error(`Unsupported logical operator: ${node.operator}`);
+				throw new SyntaxError(`Unsupported logical operator: ${node.operator}`);
 			}
 		}
 	}
@@ -333,10 +333,10 @@ export class Evaluator {
 				return void this.visit(node.argument);
 			}
 			case "delete": {
-				throw new Error(renderErrorMessage(ERROR_MESSAGES.IS_NOT_ALLOWED, ["Delete operator"]));
+				throw new SyntaxError(renderErrorMessage(ERROR_MESSAGES.IS_NOT_ALLOWED, ["Delete operator"]));
 			}
 			default: {
-				throw new Error(`Unsupported unary operator: ${node.operator}`);
+				throw new SyntaxError(`Unsupported unary operator: ${node.operator}`);
 			}
 		}
 	}
