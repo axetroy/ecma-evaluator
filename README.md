@@ -380,7 +380,7 @@ evalExpression(`require('fs').readFileSync('/etc/passwd')`, { require: require }
 ```js
 // ❌ These will throw errors:
 evalExpression("arr.push(1)", { arr: [1, 2, 3] });
-// Error: Cannot call mutable prototype method: push
+// Error: Array.prototype.push is not allow
 
 evalExpression("new Function('return 1')");
 // Error: Cannot use new with Function constructor
