@@ -4,19 +4,23 @@ import { blockedGlobalBuiltIns, blockedMethods } from "./block.js";
 
 // Error message constants for better maintainability
 const ERROR_MESSAGES = {
-	DELETE_NOT_SUPPORTED: "Delete operator is not allow",
-	NEW_FUNCTION_NOT_ALLOWED: "Cannot use new with Function constructor",
-	NOT_A_FUNCTION: "is not a function",
-	PROPERTY_READ_ERROR: "Cannot read property",
-	VARIABLE_NOT_DEFINED: "is not defined",
-	FUNCTION_CONSTRUCTOR_NOT_ALLOWED: "Function constructor is not allowed",
-	THIS_NOT_ALLOWED: "'this' keyword is not allowed",
-	NOT_A_VALID_SYNTAX: "is not a valid syntax",
-	ACCESSING_PROTOTYPE_NOT_ALLOWED: "Accessing prototype properties is not allowed",
-	WITH_NOT_ALLOWED: "'with' statement is not allowed",
-	FUNCTION_EXPRESSION_NOT_ALLOWED: "Function expressions are not allowed",
-	METHOD_NOT_ALLOWED: "is not allowed",
+	CAN_NOT_READ_PROPERTY: "Cannot read property of {0} (reading '{1}')",
+	IS_NOT_FUNCTION: "{0} is not a function",
+	IS_NOT_DEFINED: "{0} is not defined",
+	IS_NOT_VALID_SYNTAX: "{0} is not a valid syntax",
+	IS_NOT_ALLOWED: "{0} is not allowed",
 };
+
+/**
+ * Renders an error message by replacing placeholders with context values.
+ * @param {string} template
+ * @param {Record<string, any>} context
+ * @example
+ * ```js
+ * const msg = renderErrorMessage("Cannot call mutable prototype method: {method}", { method: "push" });
+ * ```
+ */
+const renderErrorMessage = (template, context = {}) => template.replace(/{(\w+)}/g, (_, key) => String(context[key]));
 
 const BINARY_OPERATION_MAP = {
 	"+": (a, b) => a + b,
@@ -211,7 +215,7 @@ export class Evaluator {
 				return this.handleObjectExpression(node);
 			}
 			case "FunctionExpression": {
-				throw new Error(ERROR_MESSAGES.FUNCTION_EXPRESSION_NOT_ALLOWED);
+				throw new Error(renderErrorMessage(ERROR_MESSAGES.IS_NOT_ALLOWED, ["Function expression"]));
 			}
 			case "ArrowFunctionExpression": {
 				return this.handleArrowFunctionExpression(node);
@@ -228,7 +232,7 @@ export class Evaluator {
 				}
 
 				if (node.callee.name === "Function") {
-					throw new Error(ERROR_MESSAGES.NEW_FUNCTION_NOT_ALLOWED);
+					throw new Error(renderErrorMessage(ERROR_MESSAGES.IS_NOT_ALLOWED, ["new Function() constructor"]));
 				}
 
 				const Constructor = this.visit(node.callee);
@@ -245,10 +249,10 @@ export class Evaluator {
 				return this.handleTemplateLiteral(node);
 			}
 			case "ThisExpression": {
-				throw new Error(ERROR_MESSAGES.THIS_NOT_ALLOWED);
+				throw new Error(renderErrorMessage(ERROR_MESSAGES.IS_NOT_ALLOWED, ["'this' expression"]));
 			}
 			case "WithStatement": {
-				throw new Error(ERROR_MESSAGES.WITH_NOT_ALLOWED);
+				throw new Error(renderErrorMessage(ERROR_MESSAGES.IS_NOT_ALLOWED, ["'with' statement"]));
 			}
 			default: {
 				let content = this.source.slice(node.start, node.end);
@@ -257,7 +261,7 @@ export class Evaluator {
 					content = content.slice(0, 17) + "...";
 				}
 
-				throw new Error(`'${content}'` + " " + ERROR_MESSAGES.NOT_A_VALID_SYNTAX);
+				throw new Error(`'${content}'` + " " + renderErrorMessage(ERROR_MESSAGES.IS_NOT_VALID_SYNTAX, [content]));
 			}
 		}
 	}
@@ -329,7 +333,7 @@ export class Evaluator {
 				return void this.visit(node.argument);
 			}
 			case "delete": {
-				throw new Error(ERROR_MESSAGES.DELETE_NOT_SUPPORTED);
+				throw new Error(renderErrorMessage(ERROR_MESSAGES.IS_NOT_ALLOWED, ["Delete operator"]));
 			}
 			default: {
 				throw new Error(`Unsupported unary operator: ${node.operator}`);
@@ -349,7 +353,7 @@ export class Evaluator {
 			}
 		}
 
-		throw new ReferenceError(`${name} ${ERROR_MESSAGES.VARIABLE_NOT_DEFINED}`);
+		throw new ReferenceError(renderErrorMessage(ERROR_MESSAGES.IS_NOT_DEFINED, [name]));
 	}
 
 	/**
@@ -365,7 +369,7 @@ export class Evaluator {
 
 		// Prevent access to prototype properties
 		if (typeof object !== "undefined" && object !== null && object[property] === object?.__proto__) {
-			throw new Error(ERROR_MESSAGES.ACCESSING_PROTOTYPE_NOT_ALLOWED);
+			throw new Error(renderErrorMessage(ERROR_MESSAGES.IS_NOT_ALLOWED, ["Accessing prototype properties"]));
 		}
 
 		if (object === null || object === undefined) {
@@ -373,7 +377,7 @@ export class Evaluator {
 			if (node.optional) {
 				return void 0;
 			}
-			throw new TypeError(`${ERROR_MESSAGES.PROPERTY_READ_ERROR} '${property}' of ${object}`);
+			throw new TypeError(renderErrorMessage(ERROR_MESSAGES.CAN_NOT_READ_PROPERTY, [object, property]));
 		}
 
 		return object[property];
@@ -450,25 +454,20 @@ export class Evaluator {
 	 * @private
 	 */
 	handleCallExpression(node) {
-		const calledString = getNodeString(node.callee);
-
 		const func = this.visit(node.callee);
 
-		if (typeof func !== "function") {
-			const isOptional = node.optional || node.callee.optional;
-			if ((func === undefined || func === null) && isOptional) {
-				return void 0;
-			}
-			throw new TypeError(`${calledString} ${ERROR_MESSAGES.NOT_A_FUNCTION}`);
+		const isOptional = node.optional || node.callee.optional;
+		if ((func === undefined || func === null) && isOptional) {
+			return void 0;
 		}
 
 		if (func === Function) {
-			throw new Error(ERROR_MESSAGES.FUNCTION_CONSTRUCTOR_NOT_ALLOWED);
+			throw new Error(renderErrorMessage(ERROR_MESSAGES.IS_NOT_ALLOWED, ["Function constructor"]));
 		}
 
 		if (getBlockedMethods().has(func)) {
 			const path = getBlockedMethods().get(func);
-			throw new Error(`${path} ${ERROR_MESSAGES.METHOD_NOT_ALLOWED}`);
+			throw new Error(renderErrorMessage(ERROR_MESSAGES.IS_NOT_ALLOWED, [path]));
 		}
 
 		// 仅在存在参数时构建数组
@@ -494,6 +493,11 @@ export class Evaluator {
 		})();
 
 		const target = node.callee.type === "MemberExpression" ? this.visit(node.callee.object) : null;
+
+		if (typeof func !== "function") {
+			const calledString = getNodeString(node.callee);
+			throw new TypeError(renderErrorMessage(ERROR_MESSAGES.IS_NOT_FUNCTION, [calledString]));
+		}
 
 		return func.apply(target, args);
 	}

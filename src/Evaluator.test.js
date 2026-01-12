@@ -467,7 +467,7 @@ describe("Expressions", () => {
 		});
 
 		test("should block Function constructor", () => {
-			assert.throws(() => evaluator.evaluate("new Function()"), { message: "Cannot use new with Function constructor" });
+			assert.throws(() => evaluator.evaluate("new Function()"), { message: "new Function() constructor is not allowed" });
 		});
 	});
 
@@ -760,17 +760,17 @@ describe("Security and Restrictions", () => {
 		});
 
 		test("should block Function constructor", () => {
-			assert.throws(() => evaluator.evaluate('new Function("alert(123)")'), { message: "Cannot use new with Function constructor" });
+			assert.throws(() => evaluator.evaluate('new Function("alert(123)")'), { message: "new Function() constructor is not allowed" });
 			assert.throws(() => evaluator.evaluate('Function("alert(123)")'), { message: "Function is not defined" });
 		});
 
 		test("should block this keyword", () => {
-			assert.throws(() => evaluator.evaluate("this"), { message: "'this' keyword is not allowed" });
+			assert.throws(() => evaluator.evaluate("this"), { message: "'this' expression is not allowed" });
 		});
 
 		test("should block delete operator", () => {
 			const evaluator = new Evaluator({ obj: { a: 1 } });
-			assert.throws(() => evaluator.evaluate("delete obj.a"), { message: "Delete operator is not allow" });
+			assert.throws(() => evaluator.evaluate("delete obj.a"), { message: "Delete operator is not allowed" });
 		});
 
 		test("should block unsupported syntax", () => {
@@ -833,7 +833,7 @@ describe("Security and Restrictions", () => {
 
 		test("should block argument because the FunctionExpression is disallowed", () => {
 			assert.throws(() => evaluator.evaluate("((function() { return arguments; })())"), {
-				message: "Function expressions are not allowed",
+				message: "Function expression is not allowed",
 			});
 
 			assert.throws(() => evaluator.evaluate("(() => arguments)()"), {
@@ -867,12 +867,12 @@ describe("Error Handling", () => {
 	test("should throw on null/undefined property access", () => {
 		{
 			const evaluator = new Evaluator({ foo: null });
-			assert.throws(() => evaluator.evaluate("foo.bar"), { message: "Cannot read property 'bar' of null" });
+			assert.throws(() => evaluator.evaluate("foo.bar"), { message: "Cannot read property of null (reading 'bar')" });
 		}
 
 		{
 			const evaluator = new Evaluator({ foo: undefined });
-			assert.throws(() => evaluator.evaluate("foo.bar"), { message: "Cannot read property 'bar' of undefined" });
+			assert.throws(() => evaluator.evaluate("foo.bar"), { message: "Cannot read property of undefined (reading 'bar')" });
 		}
 	});
 
