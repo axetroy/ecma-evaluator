@@ -162,9 +162,33 @@ const mutableMethods = [
 	"Headers.prototype.append",
 	"Headers.prototype.delete",
 	"Headers.prototype.set",
+
+	// Function call/apply/bind can be used to invoke with arbitrary `this`
+	"Function.prototype.call",
+	"Function.prototype.apply",
+	"Function.prototype.bind",
+	"Function.prototype.constructor",
+
+	// Legacy lookup helpers
+	"Object.prototype.__lookupGetter__",
+	"Object.prototype.__lookupSetter__",
+
+	// Constructor property can be abused to retrieve the Function constructor
+	"Object.prototype.constructor",
 ];
 
-const dangerousMethods = ["Object.getPrototypeOf"];
+const dangerousMethods = [
+	"Object.getPrototypeOf",
+	// Various reflective/object-inspection APIs that may expose internals
+	"Object.getOwnPropertyDescriptor",
+	"Object.getOwnPropertyDescriptors",
+	"Object.getOwnPropertyNames",
+	"Object.getOwnPropertySymbols",
+	"Object.getOwnPropertyDescriptors",
+];
+
+// Some prototype-style aliases/properties that can be used to break sandboxes
+mutableMethods.push("Object.prototype.__proto__");
 
 /**
  * List of methods to block due to mutability or dangerousness
@@ -182,11 +206,54 @@ export const blockedGlobalBuiltIns = [
 	"eval",
 	"setTimeout",
 	"setInterval",
+	"clearTimeout",
+	"clearInterval",
 	"setImmediate",
 	"XMLHttpRequest",
 	"fetch",
 	"WebSocket",
-	"Proxy",
 	"globalThis",
+
+	// Node / runtime globals
+	"process",
+	"require",
+	"module",
+	"exports",
+	"global",
+	"Buffer",
+	"setImmediate",
+	"clearImmediate",
+
+	// Worker / threading / messaging
+	"importScripts",
+	"Worker",
+	"SharedWorker",
+	"ServiceWorker",
+	"BroadcastChannel",
+	"MessageChannel",
+	"MessagePort",
+	"postMessage",
+
+	// Host environment globals (browser)
+	"window",
+	"document",
+	"navigator",
+	"location",
+	"localStorage",
+	"sessionStorage",
+	"indexedDB",
+	"performance",
+
+	// Low-level / concurrent / binary APIs
+	"Proxy",
 	"Reflect",
+	"Atomics",
+	"WebAssembly",
+
+	// Console and internationalization
+	"console",
+	"Intl",
+
+	// Other runtimes
+	"Deno",
 ];
