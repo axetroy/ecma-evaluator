@@ -5,9 +5,9 @@ import { blockedGlobalBuiltIns, blockedMethods } from "./block.js";
 // Error message constants for better maintainability
 const ERROR_MESSAGES = {
 	CAN_NOT_READ_PROPERTY: "Cannot read property of {0} (reading '{1}')",
+	IS_INVALID_SYNTAX: "{0} is not a valid syntax",
 	IS_NOT_FUNCTION: "{0} is not a function",
 	IS_NOT_DEFINED: "{0} is not defined",
-	IS_NOT_VALID_SYNTAX: "{0} is not a valid syntax",
 	IS_NOT_ALLOWED: "{0} is not allowed",
 };
 
@@ -261,7 +261,7 @@ export class Evaluator {
 					content = content.slice(0, 17) + "...";
 				}
 
-				throw new SyntaxError(`'${content}'` + " " + renderErrorMessage(ERROR_MESSAGES.IS_NOT_VALID_SYNTAX, [content]));
+				throw new SyntaxError(`'${content}'` + " " + renderErrorMessage(ERROR_MESSAGES.IS_INVALID_SYNTAX, [content]));
 			}
 		}
 	}
