@@ -37,6 +37,7 @@
     "devDependencies": {
         "@rslib/core": "^0.18.0",
         "@types/node": "^22.14.1",
+        "capture-stdio.js": "^1.0.2",
         "knip": "^5.53.0",
         "typescript": "^5.9.3"
     },

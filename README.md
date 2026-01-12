@@ -366,6 +366,15 @@ The following built-in objects are available in the sandboxed environment:
 -   **Errors**: `Error`, `EvalError`, `RangeError`, `ReferenceError`, `SyntaxError`, `TypeError`, `URIError`
 -   **Promises**: `Promise`
 
+### ❌ Unsafe Context (Strict)
+
+```js
+// Do not pass unsafe functions into the context:
+evalExpression(`eval("alert('this is a unsafe script')")`, { eval: eval });
+evalExpression(`Function("return 1")()`, { Function: Function });
+evalExpression(`require('fs').readFileSync('/etc/passwd')`, { require: require });
+```
+
 ### Error Prevention
 
 ```js

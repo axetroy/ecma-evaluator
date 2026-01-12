@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { beforeEach, describe, test } from "node:test";
+import { captureSync } from "capture-stdio.js";
 
 import { Evaluator, getNodeString } from "./Evaluator.js";
 import { blockedGlobalBuiltIns } from "./block.js";
@@ -838,6 +839,17 @@ describe("Security and Restrictions", () => {
 			assert.throws(() => evaluator.evaluate("(() => arguments)()"), {
 				message: "arguments is not defined",
 			});
+		});
+	});
+
+	describe("Unsafe context", () => {
+		test("should block accessing unsafe context properties", () => {
+			const { stdout } = captureSync(() => {
+				const evaluator = new Evaluator({ eval: eval });
+				evaluator.evaluate(`eval("console.log('this is a unsafe script')")`);
+			});
+
+			assert.deepStrictEqual(stdout, "this is a unsafe script\n");
 		});
 	});
 });

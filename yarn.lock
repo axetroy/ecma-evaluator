@@ -393,6 +393,11 @@ braces@^3.0.3:
   dependencies:
     fill-range "^7.1.1"
 
+capture-stdio.js@^1.0.2:
+  version "1.0.2"
+  resolved "https://registry.npmjs.org/capture-stdio.js/-/capture-stdio.js-1.0.2.tgz#626ddbe60505d6a4ed1157ec146dca9331c06ea2"
+  integrity sha512-MWL201KrWWSiNjxNQ2pioIAxjB4/GLU8M4LUqVDAeRg8AFjs55MsUQ3ODDxOK+pGsO+1ivbxCB2LBA/59e2hYA==
+
 core-js@~3.46.0:
   version "3.46.0"
   resolved "https://registry.npmjs.org/core-js/-/core-js-3.46.0.tgz#323a092b96381a9184d0cd49ee9083b2f93373bb"

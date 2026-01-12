@@ -366,6 +366,15 @@ evalExpression("new Map([['a', 1], ['b', 2]])"); // Map {"a" => 1, "b" => 2}
 -   **错误**: `Error`, `EvalError`, `RangeError`, `ReferenceError`, `SyntaxError`, `TypeError`, `URIError`
 -   **Promise**: `Promise`
 
+### ❌ 不安全的上下文（严谨）
+
+```js
+// 不要将不安全的函数传递给上下文：
+evalExpression(`eval("alert('this is a unsafe script')")`, { eval: eval });
+evalExpression(`Function("return 1")()`, { Function: Function });
+evalExpression(`require('fs').readFileSync('/etc/passwd')`, { require: require });
+```
+
 ### 错误预防
 
 ```js
