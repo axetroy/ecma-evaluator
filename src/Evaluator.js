@@ -170,9 +170,15 @@ export class Evaluator {
 	 */
 	execute(body) {
 		let result;
+
 		for (const node of body) {
 			result = this.visit(node);
 		}
+
+		if (typeof result === "function") {
+			throw new Error(renderErrorMessage(ERROR_MESSAGES.IS_NOT_ALLOWED, ["Returning functions from expressions"]));
+		}
+
 		return result;
 	}
 

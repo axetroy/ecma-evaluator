@@ -910,6 +910,14 @@ describe("Security and Restrictions", () => {
 			});
 		});
 	});
+
+	describe("Blocked Return Values", () => {
+		test("should block functions that return unsafe values", () => {
+			const evaluator = new Evaluator({});
+
+			assert.throws(() => evaluator.evaluate("[].map"), { message: "Returning functions from expressions is not allowed" });
+		});
+	});
 });
 
 describe("Error Handling", () => {
