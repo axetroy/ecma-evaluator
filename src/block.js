@@ -16,6 +16,8 @@ const mutableMethods = [
 	"Object.freeze",
 	"Object.setPrototypeOf",
 	"Object.assign",
+	"Object.prototype.__defineGetter__",
+	"Object.prototype.__defineSetter__",
 
 	"Reflect.set",
 	"Reflect.defineProperty",
