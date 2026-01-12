@@ -175,7 +175,7 @@ export class Evaluator {
 	/**
 	 * Visits an AST node and delegates to the appropriate handler based on node type.
 	 * @private
-	 * @param {Object} node - The AST node to visit
+	 * @param {import("acorn").Node} node - The AST node to visit
 	 * @returns {*} The result of visiting the node
 	 */
 	visit(node) {
