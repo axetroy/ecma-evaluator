@@ -125,7 +125,7 @@ export class Evaluator {
 	 * The scope hierarchy is: user variables -> global scope
 	 * @param {Object} [variables={}] - An optional object containing variables to make available in the evaluation context
 	 */
-	constructor(variables = {}) {
+	constructor(variables = Object.create(null)) {
 		this.scopes = [variables, createGlobalScope()].filter((scope) => scope !== null && scope !== undefined);
 		this.source = undefined;
 	}
