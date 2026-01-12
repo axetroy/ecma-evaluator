@@ -366,14 +366,6 @@ The following built-in objects are available in the sandboxed environment:
 -   **Errors**: `Error`, `EvalError`, `RangeError`, `ReferenceError`, `SyntaxError`, `TypeError`, `URIError`
 -   **Promises**: `Promise`
 
-### ❌ Unsafe Context (Strict)
-
-```js
-// Do not pass unsafe functions into the context:
-evalExpression(`eval("alert('this is a unsafe script')")`, { eval: eval });
-evalExpression(`Function("return 1")()`, { Function: Function });
-evalExpression(`require('fs').readFileSync('/etc/passwd')`, { require: require });
-```
 
 ### Error Prevention
 
@@ -467,6 +459,7 @@ const isValid = evalExpression(validationRule, {
 5. **No function declarations** - Only arrow functions in expressions are supported
 6. **Limited error recovery** - Syntax errors will throw immediately
 7. **No imports/requires** - Cannot import external modules
+8. **Cloneable context only** - Context objects must be cloneable (no functions, DOM nodes, etc.)
 
 ## Advanced Usage
 
@@ -511,6 +504,15 @@ evalTemplate(
 ## TypeScript Support
 
 The package includes TypeScript type definitions:
+
+## Compatibility
+
+Compatible with Nodejs and major browsers. For older environments, use Babel for transpilation and polyfills.
+
+```js
+import 'core-js/actual/structured-clone.js';
+import 'core-js/actual/object/has-own.js';
+```
 
 ## Contributing
 

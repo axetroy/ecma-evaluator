@@ -351,6 +351,7 @@ evalExpression("new Map([['a', 1], ['b', 2]])"); // Map {"a" => 1, "b" => 2}
 5. **无文件系统或网络访问** - 无法访问 Node.js API 或执行 I/O 操作
 6. **无法访问进程或全局变量** - 无法访问 `process`、`global`、`require` 等
 7. **防止原型污染** - 阻止访问原型属性（例如，`__proto__`）
+8. **上下文克隆** - 提供给求值器的上下文对象会被克隆以防止外部修改
 
 ### 安全的内置对象
 
@@ -365,15 +366,6 @@ evalExpression("new Map([['a', 1], ['b', 2]])"); // Map {"a" => 1, "b" => 2}
 -   **类型化数组**: `Int8Array`, `Uint8Array`, `Int16Array`, `Uint16Array`, `Int32Array`, `Uint32Array`, `Float32Array`, `Float64Array`, `BigInt64Array`, `BigUint64Array`
 -   **错误**: `Error`, `EvalError`, `RangeError`, `ReferenceError`, `SyntaxError`, `TypeError`, `URIError`
 -   **Promise**: `Promise`
-
-### ❌ 不安全的上下文（严谨）
-
-```js
-// 不要将不安全的函数传递给上下文：
-evalExpression(`eval("alert('this is a unsafe script')")`, { eval: eval });
-evalExpression(`Function("return 1")()`, { Function: Function });
-evalExpression(`require('fs').readFileSync('/etc/passwd')`, { require: require });
-```
 
 ### 错误预防
 
@@ -511,6 +503,15 @@ evalTemplate(
 ## TypeScript 支持
 
 该包包含 TypeScript 类型定义。
+
+## 兼容性
+
+兼容 Nodejs 和主流浏览器环境。如需支持更老版本的环境，请使用 Babel 进行转译以及 polyfill。
+
+```js
+import 'core-js/actual/structured-clone.js';
+import 'core-js/actual/object/has-own.js';
+```
 
 ## 贡献
 

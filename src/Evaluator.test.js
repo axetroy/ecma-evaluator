@@ -425,11 +425,6 @@ describe("Expressions", () => {
 
 		test("should handle optional chaining with function calls", () => {
 			{
-				const evaluator = new Evaluator({ foo: { bar: () => 42 } });
-				assert.equal(evaluator.evaluate("foo?.bar()"), 42);
-			}
-
-			{
 				const evaluator = new Evaluator({ foo: null });
 				assert.equal(evaluator.evaluate("foo?.bar()"), undefined);
 			}
@@ -446,7 +441,6 @@ describe("Expressions", () => {
 					a: {
 						b: {
 							c: 42,
-							fn: () => 100,
 						},
 					},
 				},
@@ -454,8 +448,6 @@ describe("Expressions", () => {
 			assert.equal(evaluator.evaluate("obj?.a?.b?.c"), 42);
 			assert.equal(evaluator.evaluate("obj?.a?.b?.d"), undefined);
 			assert.equal(evaluator.evaluate("obj?.a?.x?.c"), undefined);
-			assert.equal(evaluator.evaluate("obj?.a?.b?.fn()"), 100);
-			assert.equal(evaluator.evaluate("obj?.a?.b?.fn?.()"), 100);
 		});
 	});
 
@@ -483,8 +475,8 @@ describe("Expressions", () => {
 		});
 
 		test("should handle spread in object literals", () => {
-			const evaluator = new Evaluator({ obj1: { a: 1 }, obj2: { b: 2 }, merge: (a, b) => ({ ...a, ...b }) });
-			assert.deepEqual(evaluator.evaluate("merge({...obj1, ...obj2})"), { a: 1, b: 2 });
+			const evaluator = new Evaluator({ obj1: { a: 1 }, obj2: { b: 2 } });
+			assert.deepEqual(evaluator.evaluate("({ ...obj1, ...obj2 })"), { a: 1, b: 2 });
 		});
 
 		test("should handle spread with strings", () => {
@@ -756,6 +748,44 @@ describe("Variables and Context", () => {
 		assert.throws(() => evaluator.evaluate("a"), { message: "a is not defined" });
 		assert.throws(() => evaluator.evaluate("a.b"), { message: "a is not defined" });
 	});
+
+	test("Should handle context and context has been sanitized", () => {
+		const context = { a: 1, b: { c: 2 } };
+		const evaluator = new Evaluator(context);
+
+		assert.equal(evaluator.evaluate("a"), 1);
+		assert.equal(evaluator.evaluate("b.c"), 2);
+
+		// Sanitize context
+		delete context.a;
+		delete context.b;
+
+		assert.equal(evaluator.evaluate("a"), 1);
+		assert.equal(evaluator.evaluate("b.c"), 2);
+	});
+
+	test("Should handle context when it's not cloneable", () => {
+		assert.throws(() => new Evaluator({ foo: (x) => x }), { message: "(x) => x could not be cloned." });
+	});
+
+	test("Should handle context with various data types", () => {
+		class Man {
+			color = "green";
+
+			#age = 18;
+
+			getAge() {
+				return this.#age;
+			}
+		}
+
+		const man = new Man();
+
+		const evaluator = new Evaluator({ man });
+
+		assert.throws(() => evaluator.evaluate("man.getAge()"), { message: "man.getAge is not a function" });
+		assert.strictEqual(evaluator.evaluate("man.color"), "green");
+	});
 });
 
 describe("Complex Expressions", () => {
@@ -878,17 +908,6 @@ describe("Security and Restrictions", () => {
 			assert.throws(() => evaluator.evaluate("(() => arguments)()"), {
 				message: "arguments is not defined",
 			});
-		});
-	});
-
-	describe("Unsafe context", () => {
-		test("should block accessing unsafe context properties", () => {
-			const { stdout } = captureSync(() => {
-				const evaluator = new Evaluator({ eval: eval });
-				evaluator.evaluate(`eval("console.log('this is a unsafe script')")`);
-			});
-
-			assert.deepStrictEqual(stdout, "this is a unsafe script\n");
 		});
 	});
 });
