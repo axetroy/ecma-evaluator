@@ -126,7 +126,7 @@ export class Evaluator {
 	 * @param {Object} [variables={}] - An optional object containing variables to make available in the evaluation context
 	 */
 	constructor(variables = {}) {
-		this.scopes = [variables, createGlobalScope()];
+		this.scopes = [variables, createGlobalScope()].filter((scope) => scope !== null && scope !== undefined);
 		this.source = undefined;
 	}
 

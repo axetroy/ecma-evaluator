@@ -717,6 +717,45 @@ describe("Variables and Context", () => {
 		assert.throws(() => evaluator.evaluate("undefinedVar"), { message: "undefinedVar is not defined" });
 		assert.throws(() => evaluator.evaluate("undefinedVar.property"), { message: "undefinedVar is not defined" });
 	});
+
+	test("Should handle nested context objects", () => {
+		const evaluator = new Evaluator({
+			user: {
+				name: "Alice",
+				address: {
+					city: "Wonderland",
+				},
+			},
+		});
+
+		assert.equal(evaluator.evaluate("user.name"), "Alice");
+		assert.equal(evaluator.evaluate("user.address.city"), "Wonderland");
+		assert.equal(evaluator.evaluate("user.age"), undefined);
+	});
+
+	test("Should handle context when it is a null prototype object", () => {
+		const context = Object.create(null);
+		context.x = 10;
+		context.y = 20;
+		const evaluator = new Evaluator(context);
+
+		assert.equal(evaluator.evaluate("x + y"), 30);
+		assert.throws(() => evaluator.evaluate("z"), { message: "z is not defined" });
+	});
+
+	test("Should handle context with undefined", () => {
+		const evaluator = new Evaluator(undefined);
+
+		assert.throws(() => evaluator.evaluate("a"), { message: "a is not defined" });
+		assert.throws(() => evaluator.evaluate("a.b"), { message: "a is not defined" });
+	});
+
+	test("Should handle context with null", () => {
+		const evaluator = new Evaluator(null);
+
+		assert.throws(() => evaluator.evaluate("a"), { message: "a is not defined" });
+		assert.throws(() => evaluator.evaluate("a.b"), { message: "a is not defined" });
+	});
 });
 
 describe("Complex Expressions", () => {
