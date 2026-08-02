@@ -352,6 +352,11 @@ evalExpression("new Map([['a', 1], ['b', 2]])"); // Map {"a" => 1, "b" => 2}
 6. **无法访问进程或全局变量** - 无法访问 `process`、`global`、`require` 等
 7. **防止原型污染** - 阻止访问原型属性（例如，`__proto__`）
 8. **上下文克隆** - 提供给求值器的上下文对象会被克隆以防止外部修改
+9. **限制表达式长度** - `Evaluator` 默认拒绝超过 10,000 个字符的表达式
+10. **阻止异步逃逸** - `Promise` 已从沙箱中完全移除；任何引用都会抛出错误
+
+> [!IMPORTANT]
+> 求值器限制了语法和输入长度，但无法预防 CPU 密集型表达式或限制内置对象进行的资源分配。请在隔离的 Worker/线程/进程中执行不受信任的输入，并通过宿主强制的时间与内存限制兜底。
 
 ### 安全的内置对象
 
@@ -365,7 +370,8 @@ evalExpression("new Map([['a', 1], ['b', 2]])"); // Map {"a" => 1, "b" => 2}
 -   **类型**: `Boolean`, `Symbol`, `BigInt`, `RegExp`
 -   **类型化数组**: `Int8Array`, `Uint8Array`, `Int16Array`, `Uint16Array`, `Int32Array`, `Uint32Array`, `Float32Array`, `Float64Array`, `BigInt64Array`, `BigUint64Array`
 -   **错误**: `Error`, `EvalError`, `RangeError`, `ReferenceError`, `SyntaxError`, `TypeError`, `URIError`
--   **Promise**: `Promise`
+
+沙箱中不提供 `Promise` — 任何引用（包括 `typeof Promise`）都会抛出错误，因此没有任何 Promise 能从 `evaluate()` 逃逸。
 
 ### 错误预防
 
@@ -455,10 +461,12 @@ const isValid = evalExpression(validationRule, {
 1. **无语句** - 仅支持表达式，不支持语句（无 `if`、`for`、`while` 等）
 2. **无变量赋值** - 不能使用赋值运算符（`=`、`+=` 等）
 3. **无可变操作** - 阻止可变的数组/对象方法
-4. **无异步操作** - Promise 可以工作，但不能使用 `await`
+4. **无异步操作** - 没有可用的异步 API；`Promise` 已从沙箱中移除（`Promise`、`queueMicrotask`、`AbortSignal` 等都会抛出错误）
 5. **无函数声明** - 仅支持表达式中的箭头函数
 6. **有限的错误恢复** - 语法错误将立即抛出
 7. **无导入/require** - 无法导入外部模块
+8. **上下文可克隆** - 上下文对象必须可克隆（不能包含函数、DOM 节点等）
+9. **输入长度限制** - 超过配置限制（默认 10,000 个字符）的表达式会抛出 `SyntaxError`
 
 ## 高级用法
 
@@ -474,6 +482,21 @@ const evaluator = new Evaluator({ x: 10, y: 20 });
 console.log(evaluator.evaluate("x + y")); // 30
 console.log(evaluator.evaluate("x * y")); // 200
 console.log(evaluator.evaluate("Math.max(x, y)")); // 20
+```
+
+### 配置输入长度限制
+
+```js
+import { Evaluator } from "ecma-evaluator";
+
+// 为实例覆盖最大表达式长度
+const evaluator = new Evaluator({}, { maxInputLength: 5000 });
+
+try {
+	evaluator.evaluate("long expression...");
+} catch (error) {
+	console.log(error.message); // Expression exceeds the maximum length of 5000 characters
+}
 ```
 
 ### 自定义模板解析器

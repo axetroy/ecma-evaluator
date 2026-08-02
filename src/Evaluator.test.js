@@ -670,9 +670,20 @@ describe("Built-in Objects", () => {
 	});
 
 	describe("Promise", () => {
-		test("should recognize Promise type", () => {
-			assert.equal(evaluator.evaluate("typeof Promise"), "function");
-			assert.equal(evaluator.evaluate("new Promise((resolve) => resolve(42))") instanceof Promise, true);
+		test("should not expose Promise in the sandbox", () => {
+			// Promise is fully removed: any reference fails at identifier
+			// resolution, so nothing can schedule host microtasks.
+			assert.throws(() => evaluator.evaluate("Promise"), { message: "Promise is not defined" });
+			assert.throws(() => evaluator.evaluate("typeof Promise"), { message: "Promise is not defined" });
+			assert.throws(() => evaluator.evaluate("Promise.resolve(42)"), { message: "Promise is not defined" });
+
+			// The constructor gets a dedicated message mirroring the
+			// `new Function()` pattern: a throwing executor would turn into a
+			// rejected Promise that escapes evaluate() and, if unhandled by
+			// the host, crashes the process with an unhandled rejection.
+			assert.throws(() => evaluator.evaluate("new Promise((resolve) => resolve(42))"), {
+				message: "Promise constructor is not allowed",
+			});
 		});
 	});
 
@@ -890,7 +901,6 @@ describe("Security and Restrictions", () => {
 				"Math.max.constructor",
 				"Math.max.constructor.constructor",
 				"[].flat.constructor",
-				"Promise.prototype.then.constructor",
 				"({}).constructor.constructor.prototype",
 			];
 
@@ -899,16 +909,14 @@ describe("Security and Restrictions", () => {
 			}
 		});
 
-		test("should block sandbox escape via native callbacks (Promise.then / Array.map)", () => {
+		test("should block sandbox escape via native callbacks (Array.map / filter / reduce)", () => {
 			// Native callback mechanisms invoke their arguments in the host
 			// runtime, outside the interpreter's call path. A leaked `Function`
 			// reference passed as a callback would execute arbitrary code.
 			const fixtures = [
-				"Promise.resolve('x').then(({}).constructor.constructor)",
 				"[1].map(({}).constructor.constructor)",
 				"[1, 2].filter(({}).constructor.constructor)",
 				"[1, 2].reduce(({}).constructor.constructor)",
-				"Promise.resolve('x').then(({}).constructor.constructor).then(fn => fn())",
 			];
 
 			for (const code of fixtures) {
@@ -916,23 +924,45 @@ describe("Security and Restrictions", () => {
 			}
 		});
 
-		test("should block leaking the Function constructor through async callbacks", async () => {
-			// The callback itself is a legitimate arrow function, so the call
-			// is synchronous - but the leaked constructor inside it must cause
-			// the resulting promise to reject instead of executing code.
-			await assert.rejects(evaluator.evaluate("Promise.resolve('x').then(fn => fn.constructor.constructor)"), {
-				message: "Function constructor is not allowed",
-			});
-			await assert.rejects(evaluator.evaluate("Promise.resolve('x').then(x => [x.constructor.constructor])"), {
-				message: "Function constructor is not allowed",
-			});
+		test("should block sandbox escape via Promise.then", () => {
+			// `then` schedules sandbox callbacks in the host microtask queue,
+			// where errors bypass the caller's synchronous try/catch and become
+			// unhandled rejections. Promise is fully removed from the sandbox,
+			// so every path fails at identifier resolution.
+			const viaResolve = [
+				"Promise.resolve('x').then(({}).constructor.constructor)",
+				"Promise.resolve('x').then(({}).constructor.constructor).then(fn => fn())",
+				"Promise.resolve('x').then(fn => fn.constructor.constructor)",
+				"Promise.resolve('x').then(x => [x.constructor.constructor])",
+				"Promise.prototype.then(undefined)",
+			];
+
+			for (const code of viaResolve) {
+				assert.throws(() => evaluator.evaluate(code), { message: "Promise is not defined" });
+			}
+		});
+
+		test("should block Promise static methods that produce Promises", () => {
+			// None of these can even resolve `Promise` in the sandbox.
+			const fixtures = [
+				"Promise.resolve(42)",
+				"Promise.reject(42)",
+				"Promise.all([1])",
+				"Promise.race([1])",
+				"Promise.any([1])",
+				"Promise.allSettled([1])",
+				"Promise.withResolvers()",
+			];
+
+			for (const code of fixtures) {
+				assert.throws(() => evaluator.evaluate(code), { message: "Promise is not defined" });
+			}
 		});
 
 		test("should keep legitimate native callbacks working", () => {
 			assert.deepEqual(evaluator.evaluate("[1, 2, 3].map(x => x * 2)"), [2, 4, 6]);
 			assert.deepEqual(evaluator.evaluate("[1, 2, 3].filter(x => x > 1)"), [2, 3]);
 			assert.equal(evaluator.evaluate("Math.max(1, 2, 3)"), 3);
-			assert.equal(evaluator.evaluate("Promise.resolve(42) instanceof Promise"), true);
 		});
 
 		test("should block accessing prototype properties", () => {
@@ -971,6 +1001,113 @@ describe("Security and Restrictions", () => {
 			const evaluator = new Evaluator({});
 
 			assert.throws(() => evaluator.evaluate("[].map"), { message: "Returning functions from expressions is not allowed" });
+		});
+
+		test("should block returning promises from expressions", () => {
+			const evaluator = new Evaluator({});
+
+			// A leaked Promise would schedule its settlement callbacks in the
+			// host microtask queue; errors there bypass synchronous try/catch.
+			// Promise is not defined in the sandbox at all.
+			assert.throws(() => evaluator.evaluate("Promise.resolve(42)"), {
+				message: "Promise is not defined",
+			});
+			assert.throws(() => evaluator.evaluate("(x => x)(Promise.resolve(42))"), {
+				message: "Promise is not defined",
+			});
+
+			// The exit check is the last line of defense. Context values can
+			// never contain Promises (structuredClone rejects them), so
+			// exercise the check directly with a crafted AST node.
+			assert.throws(
+				() => new Evaluator({}).execute([{ type: "Literal", value: Promise.resolve(42) }]),
+				{ message: "Returning promises from expressions is not allowed" }
+			);
+		});
+
+		test("should never leak a Promise as an evaluation result", () => {
+			// Invariant: no expression may ever produce a Promise value.
+			const evaluator = new Evaluator({ p: undefined });
+			const expressions = [
+				"Promise",
+				"typeof Promise",
+				"new Promise(() => {})",
+				"Promise.resolve(1)",
+				"[1, 2, 3].map(x => x * 2)",
+				"(async () => 1)()",
+			];
+
+			for (const code of expressions) {
+				let result;
+				try {
+					result = evaluator.evaluate(code);
+				} catch {
+					continue; // blocked expressions are fine
+				}
+				assert.equal(result instanceof Promise, false, `"${code}" must not produce a Promise`);
+			}
+		});
+	});
+
+	describe("Blocked Async Primitives", () => {
+		test("should block queueMicrotask", () => {
+			// queueMicrotask schedules sandbox callbacks in the host microtask
+			// queue, escaping synchronous error handling entirely.
+			assert.throws(() => evaluator.evaluate("queueMicrotask(() => {})"), { message: "queueMicrotask is not defined" });
+		});
+
+		test("should block AbortSignal", () => {
+			// AbortSignal.timeout() schedules a host timer whose abort listener
+			// runs outside the interpreter.
+			assert.throws(() => evaluator.evaluate("AbortSignal.timeout(1)"), { message: "AbortSignal is not defined" });
+			assert.throws(() => evaluator.evaluate("typeof AbortSignal"), { message: "AbortSignal is not defined" });
+		});
+	});
+
+	describe("Input Length Limit", () => {
+		test("should reject expressions longer than the default maximum length", () => {
+			const evaluator = new Evaluator({});
+
+			const expression = "1 + ".repeat(5000) + "1";
+			assert.ok(expression.length > 10000);
+			assert.throws(() => evaluator.evaluate(expression), {
+				message: "Expression exceeds the maximum length of 10000 characters",
+			});
+		});
+
+		test("should accept expressions within the default maximum length", () => {
+			const evaluator = new Evaluator({});
+
+			assert.equal(evaluator.evaluate("1 + 2"), 3);
+
+			// 4001 characters (< 10000), evaluates to 1001
+			assert.equal(evaluator.evaluate("1 + ".repeat(1000) + "1"), 1001);
+		});
+
+		test("should respect a custom maxInputLength option", () => {
+			const evaluator = new Evaluator({}, { maxInputLength: 10 });
+
+			assert.equal(evaluator.evaluate("1 + 1"), 2);
+
+			// "1 + 1 + 1 + 1" is 13 characters > 10
+			assert.throws(() => evaluator.evaluate("1 + 1 + 1 + 1"), {
+				message: "Expression exceeds the maximum length of 10 characters",
+			});
+		});
+
+		test("should accept expressions exactly at the maximum length", () => {
+			const evaluator = new Evaluator({}, { maxInputLength: 5 });
+
+			assert.equal(evaluator.evaluate("1 + 1"), 2); // length 5
+			assert.throws(() => evaluator.evaluate("1 + 12"), { message: "Expression exceeds the maximum length of 5 characters" });
+		});
+
+		test("should reject non-string expressions", () => {
+			const evaluator = new Evaluator({});
+
+			assert.throws(() => evaluator.evaluate(123), { message: "Expression must be a string" });
+			assert.throws(() => evaluator.evaluate(null), { message: "Expression must be a string" });
+			assert.throws(() => evaluator.evaluate(undefined), { message: "Expression must be a string" });
 		});
 	});
 });

@@ -132,9 +132,6 @@ const mutableMethods = [
 	"DataView.prototype.setBigInt64",
 	"DataView.prototype.setBigUint64",
 
-	"Promise.prototype.catch",
-	"Promise.prototype.finally",
-
 	"Generator.prototype.next",
 	"Generator.prototype.return",
 	"Generator.prototype.throw",
@@ -249,6 +246,20 @@ export const blockedGlobalBuiltIns = [
 	"Reflect",
 	"Atomics",
 	"WebAssembly",
+
+	// Asynchronous scheduling primitives that invoke callbacks in the host
+	// runtime after evaluate() returns, escaping synchronous error handling
+	"queueMicrotask",
+	// AbortSignal.timeout() schedules a host timer whose abort listener runs
+	// outside the interpreter; the whole global is blocked to close that hole
+	"AbortSignal",
+
+	// Promise is removed entirely. Any Promise that escapes evaluate() would
+	// schedule its settlement callbacks in the host microtask queue, where
+	// errors bypass the caller's synchronous try/catch and become unhandled
+	// rejections. This single entry replaces the former per-method blocklist
+	// (then/catch/finally/resolve/reject/all/race/any/allSettled/withResolvers).
+	"Promise",
 
 	// Console and internationalization
 	"console",

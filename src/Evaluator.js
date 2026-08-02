@@ -9,7 +9,15 @@ const ERROR_MESSAGES = {
 	IS_NOT_FUNCTION: "{0} is not a function",
 	IS_NOT_DEFINED: "{0} is not defined",
 	IS_NOT_ALLOWED: "{0} is not allowed",
+	EXPRESSION_TOO_LONG: "Expression exceeds the maximum length of {0} characters",
 };
+
+/**
+ * Default maximum input length for a single expression.
+ * Protects against resource exhaustion from overly long inputs.
+ * Can be overridden per-instance via `new Evaluator(variables, { maxInputLength })`.
+ */
+const DEFAULT_MAX_INPUT_LENGTH = 10000;
 
 /**
  * Renders an error message by replacing placeholders with context values.
@@ -124,10 +132,13 @@ export class Evaluator {
 	 * Creates a new Evaluator instance with a custom variable context.
 	 * The scope hierarchy is: user variables -> global scope
 	 * @param {Object} [variables={}] - An optional object containing variables to make available in the evaluation context
+	 * @param {Object} [options={}] - Additional configuration options
+	 * @param {number} [options.maxInputLength=10000] - Maximum allowed length (in characters) of an expression
 	 */
-	constructor(variables = Object.create(null)) {
+	constructor(variables = Object.create(null), options) {
 		this.scopes = [structuredClone(variables), createGlobalScope()].filter((scope) => scope !== null && scope !== undefined);
 		this.source = undefined;
+		this.maxInputLength = (options ?? {}).maxInputLength ?? DEFAULT_MAX_INPUT_LENGTH;
 	}
 
 	/**
@@ -150,6 +161,14 @@ export class Evaluator {
 	 * @throws {TypeError} If performing invalid operations
 	 */
 	evaluate(expression) {
+		if (typeof expression !== "string") {
+			throw new TypeError("Expression must be a string");
+		}
+
+		if (expression.length > this.maxInputLength) {
+			throw new SyntaxError(renderErrorMessage(ERROR_MESSAGES.EXPRESSION_TOO_LONG, [this.maxInputLength]));
+		}
+
 		this.source = expression;
 
 		const ast = acorn.parse(expression, { ecmaVersion: "latest" });
@@ -177,6 +196,13 @@ export class Evaluator {
 
 		if (typeof result === "function") {
 			throw new Error(renderErrorMessage(ERROR_MESSAGES.IS_NOT_ALLOWED, ["Returning functions from expressions"]));
+		}
+
+		// A leaked Promise schedules sandbox callbacks (and rejection errors)
+		// in the host microtask queue, outside the caller's try/catch. Never
+		// allow one to escape evaluate() as a value.
+		if (result instanceof Promise) {
+			throw new Error(renderErrorMessage(ERROR_MESSAGES.IS_NOT_ALLOWED, ["Returning promises from expressions"]));
 		}
 
 		return result;
@@ -239,6 +265,14 @@ export class Evaluator {
 
 				if (node.callee.name === "Function") {
 					throw new Error(renderErrorMessage(ERROR_MESSAGES.IS_NOT_ALLOWED, ["new Function() constructor"]));
+				}
+
+				// Promise is fully removed from the sandbox; give a clear error
+				// instead of a generic "not defined". Its executor runs
+				// synchronously, but a throwing executor would turn into a
+				// rejected Promise that escapes evaluate() and crashes the host.
+				if (node.callee.name === "Promise") {
+					throw new Error(renderErrorMessage(ERROR_MESSAGES.IS_NOT_ALLOWED, ["Promise constructor"]));
 				}
 
 				const Constructor = this.visit(node.callee);
@@ -525,7 +559,16 @@ export class Evaluator {
 			throw new TypeError(renderErrorMessage(ERROR_MESSAGES.IS_NOT_FUNCTION, [calledString]));
 		}
 
-		return func.apply(target, args);
+		const result = func.apply(target, args);
+
+		// Defense in depth: never let a Promise escape as a call result. Its
+		// settlement callbacks run in the host microtask queue, where errors
+		// bypass the caller's synchronous try/catch entirely.
+		if (result instanceof Promise) {
+			throw new Error(renderErrorMessage(ERROR_MESSAGES.IS_NOT_ALLOWED, ["Returning promises from expressions"]));
+		}
+
+		return result;
 	}
 
 	/**

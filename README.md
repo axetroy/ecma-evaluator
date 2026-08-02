@@ -351,6 +351,11 @@ evalExpression("new Map([['a', 1], ['b', 2]])"); // Map {"a" => 1, "b" => 2}
 5. **No file system or network access** - Cannot access Node.js APIs or perform I/O operations
 6. **No access to process or global variables** - Cannot access `process`, `global`, `require`, etc.
 7. **Prevention of prototype pollution** - Accessing prototype properties (e.g., `__proto__`) is blocked
+8. **Bounded expression size** - `Evaluator` rejects expressions longer than 10,000 characters by default
+9. **No asynchronous escape** - `Promise` is removed from the sandbox entirely; any reference to it throws
+
+> [!IMPORTANT]
+> The evaluator limits syntax and input size, but it cannot preempt CPU-intensive expressions or cap allocations made by built-ins. Evaluate untrusted input in an isolated Worker/thread/process with host-enforced time and memory limits.
 
 ### Safe Built-in Objects
 
@@ -364,8 +369,8 @@ The following built-in objects are available in the sandboxed environment:
 -   **Types**: `Boolean`, `Symbol`, `BigInt`, `RegExp`
 -   **TypedArrays**: `Int8Array`, `Uint8Array`, `Int16Array`, `Uint16Array`, `Int32Array`, `Uint32Array`, `Float32Array`, `Float64Array`, `BigInt64Array`, `BigUint64Array`
 -   **Errors**: `Error`, `EvalError`, `RangeError`, `ReferenceError`, `SyntaxError`, `TypeError`, `URIError`
--   **Promises**: `Promise`
 
+`Promise` is not available in the sandbox — any reference (including `typeof Promise`) throws, so no Promise can ever escape `evaluate()`.
 
 ### Error Prevention
 
@@ -455,11 +460,12 @@ const isValid = evalExpression(validationRule, {
 1. **No statements** - Only expressions are supported, not statements (no `if`, `for`, `while`, etc.)
 2. **No variable assignment** - Cannot use assignment operators (`=`, `+=`, etc.)
 3. **No mutable operations** - Mutable array/object methods are blocked
-4. **No async operations** - Promises work but cannot use `await`
+4. **No async operations** - No async APIs are available; `Promise` is removed from the sandbox (`Promise`, `queueMicrotask`, `AbortSignal`, etc. all throw)
 5. **No function declarations** - Only arrow functions in expressions are supported
 6. **Limited error recovery** - Syntax errors will throw immediately
 7. **No imports/requires** - Cannot import external modules
 8. **Cloneable context only** - Context objects must be cloneable (no functions, DOM nodes, etc.)
+9. **Input length limit** - Expressions longer than the configured limit (10,000 characters by default) throw a `SyntaxError`
 
 ## Advanced Usage
 
@@ -475,6 +481,21 @@ const evaluator = new Evaluator({ x: 10, y: 20 });
 console.log(evaluator.evaluate("x + y")); // 30
 console.log(evaluator.evaluate("x * y")); // 200
 console.log(evaluator.evaluate("Math.max(x, y)")); // 20
+```
+
+### Configuring the Input Length Limit
+
+```js
+import { Evaluator } from "ecma-evaluator";
+
+// Override the maximum expression length for an instance
+const evaluator = new Evaluator({}, { maxInputLength: 5000 });
+
+try {
+	evaluator.evaluate("long expression...");
+} catch (error) {
+	console.log(error.message); // Expression exceeds the maximum length of 5000 characters
+}
 ```
 
 ### Custom Template Parser
