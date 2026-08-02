@@ -350,9 +350,10 @@ evalExpression("new Map([['a', 1], ['b', 2]])"); // Map {"a" => 1, "b" => 2}
 4. **Limited global scope** - Only safe built-in objects are available (Math, JSON, Array, Object, etc.)
 5. **No file system or network access** - Cannot access Node.js APIs or perform I/O operations
 6. **No access to process or global variables** - Cannot access `process`, `global`, `require`, etc.
-7. **Prevention of prototype pollution** - Accessing prototype properties (e.g., `__proto__`) is blocked
-8. **Bounded expression size** - `Evaluator` rejects expressions longer than 10,000 characters by default
-9. **No asynchronous escape** - `Promise` is removed from the sandbox entirely; any reference to it throws
+7. **Prevention of prototype pollution** - Accessing prototype properties (e.g., `__proto__`) is blocked; `Error.captureStackTrace` and reading `.stack` on `Error` instances are blocked as well
+8. **Context cloning** - The context object passed to the evaluator is cloned to prevent external mutation
+9. **Bounded expression size** - `Evaluator` rejects expressions longer than 10,000 characters by default
+10. **No asynchronous escape** - `Promise` is removed from the sandbox entirely; any reference to it throws
 
 > [!IMPORTANT]
 > The evaluator limits syntax and input size, but it cannot preempt CPU-intensive expressions or cap allocations made by built-ins. Evaluate untrusted input in an isolated Worker/thread/process with host-enforced time and memory limits.
@@ -385,6 +386,34 @@ evalExpression("new Function('return 1')");
 evalExpression("delete obj.prop", { obj: { prop: 1 } });
 // Error: Delete operator is not allow
 ```
+
+### Threat Model
+
+`ecma-evaluator` is a **syntax-restricted expression evaluator**, not a general-purpose sandbox with CPU or memory quotas. It is designed to protect against the following threats:
+
+-   **Arbitrary code execution** - `eval`, the `Function` constructor, and `new Function(...)` are blocked at both parse time and runtime
+-   **Asynchronous escape** - `Promise` is removed from the sandbox entirely, so no async continuation can outlive an `evaluate()` call
+-   **Prototype pollution** - writes through `__proto__`, `Object.defineProperty`, `Object.prototype.constructor`, and `Error.captureStackTrace` are blocked, so the sandbox cannot tamper with shared prototypes
+-   **Host callback invocation** - calling a host-installed `Error.prepareStackTrace` is blocked, and reading `.stack` on an `Error` instance (which forces V8 to materialize the stack through that callback) is blocked too
+-   **Host access & I/O** - `process`, `global`, `require`, and other runtime globals are not exposed, so file-system and network access are impossible
+
+#### Resource Boundaries
+
+`maxInputLength` limits the **length of the expression text only** - it is not a memory or CPU budget. Short expressions can still be expensive:
+
+```js
+evalExpression("new ArrayBuffer(2 ** 30)"); // ~20 chars, allocates 1 GiB
+evalExpression("10n ** 10000000n"); // BigInt exponentiation, CPU-heavy
+evalExpression("'a'.repeat(1e9)"); // allocates a 1 GiB string
+```
+
+The evaluator cannot preempt CPU-intensive expressions or cap allocations made by built-ins. **Evaluate untrusted input inside an isolated Worker/thread/process with host-enforced timeouts and memory limits.**
+
+#### Residual Risks
+
+-   If the host installs `Error.prepareStackTrace`, V8 itself invokes it whenever a stack is materialized anywhere in the process - including stacks created by the host *outside* the sandbox. The sandbox blocks direct calls to the callback and `.stack` reads on `Error` instances, but it cannot prevent the host, or unrelated host code, from triggering it.
+-   The sandbox inherits the host's globals at construction time. Host monkey-patching of built-ins is visible to the sandbox.
+-   Regular expressions are executed by the host engine; pathological patterns (ReDoS) can consume unbounded CPU inside a single `evaluate()` call.
 
 ## Use Cases
 

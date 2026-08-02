@@ -387,6 +387,34 @@ evalExpression("delete obj.prop", { obj: { prop: 1 } });
 // Error: Delete operator is not allow
 ```
 
+### 威胁模型
+
+`ecma-evaluator` 是一个**语法受限的表达式求值器**，而不是带有 CPU 或内存配额的通用沙箱。它旨在防御以下威胁：
+
+-   **任意代码执行** - `eval`、`Function` 构造函数以及 `new Function(...)` 在解析阶段和运行时都会被阻止
+-   **异步逃逸** - `Promise` 已从沙箱中完全移除，因此任何异步延续都无法在 `evaluate()` 调用之后存活
+-   **原型污染** - 通过 `__proto__`、`Object.defineProperty`、`Object.prototype.constructor` 和 `Error.captureStackTrace` 的写入均被阻止，沙箱无法篡改共享原型
+-   **宿主回调调用** - 调用宿主安装的 `Error.prepareStackTrace` 会被阻止；读取 `Error` 实例的 `.stack`（这会强制 V8 通过该回调物化堆栈）同样会被阻止
+-   **宿主访问与 I/O** - `process`、`global`、`require` 等运行时全局对象不会暴露，因此无法进行文件系统或网络访问
+
+#### 资源配额边界
+
+`maxInputLength` 仅限制**表达式文本的长度** - 它不是内存或 CPU 预算。短表达式仍然可能开销巨大：
+
+```js
+evalExpression("new ArrayBuffer(2 ** 30)"); // 约 20 个字符，分配 1 GiB
+evalExpression("10n ** 10000000n"); // BigInt 幂运算，CPU 密集型
+evalExpression("'a'.repeat(1e9)"); // 分配 1 GiB 的字符串
+```
+
+求值器无法抢占 CPU 密集型表达式，也无法限制内置对象进行的分配。**请在隔离的 Worker/线程/进程中执行不受信任的输入，并通过宿主强制的时间与内存限制兜底。**
+
+#### 残余风险
+
+-   如果宿主安装了 `Error.prepareStackTrace`，V8 会在进程中任何位置物化堆栈时调用它 - 包括由宿主在沙箱*之外*创建的堆栈。沙箱会阻止直接调用该回调以及读取 `Error` 实例的 `.stack`，但无法阻止宿主或宿主中的无关代码触发它
+-   沙箱在构造时继承宿主的全局对象。宿主对内建对象进行的猴子补丁对沙箱可见
+-   正则表达式由宿主引擎执行；病态模式（ReDoS）可能在单次 `evaluate()` 调用中消耗无上限的 CPU
+
 ## 使用场景
 
 ### 配置与规则引擎

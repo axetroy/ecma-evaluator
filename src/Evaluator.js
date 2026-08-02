@@ -407,6 +407,14 @@ export class Evaluator {
 		const isStaticProperty = node.property.type === "Identifier" && !node.computed;
 		const property = isStaticProperty ? node.property.name : this.visit(node.property);
 
+		// Reading `.stack` on an Error instance forces V8 to materialize the
+		// stack, which invokes a host-installed Error.prepareStackTrace with
+		// sandbox-owned values. Block it *before* any property access, since
+		// even the prototype check below would trigger the getter.
+		if (property === "stack" && object instanceof Error) {
+			throw new Error(renderErrorMessage(ERROR_MESSAGES.IS_NOT_ALLOWED, ["Accessing error stack"]));
+		}
+
 		// Prevent access to prototype properties
 		if (typeof object !== "undefined" && object !== null && object[property] === object?.__proto__) {
 			throw new Error(renderErrorMessage(ERROR_MESSAGES.IS_NOT_ALLOWED, ["Accessing prototype properties"]));
@@ -493,11 +501,16 @@ export class Evaluator {
 				newScope[node.params[i].name] = args[i];
 			}
 
-			// Push new scope, evaluate body, then pop scope
+			// Push new scope, evaluate body, then pop scope. The scope must be
+			// popped even when the body throws: a leaked scope would make the
+			// parameter bindings visible to subsequent evaluations on the same
+			// instance.
 			this.scopes.unshift(newScope);
-			const result = this.visit(node.body);
-			this.scopes.shift();
-			return result;
+			try {
+				return this.visit(node.body);
+			} finally {
+				this.scopes.shift();
+			}
 		};
 	}
 
@@ -515,6 +528,14 @@ export class Evaluator {
 
 		if (func === Function) {
 			throw new Error(renderErrorMessage(ERROR_MESSAGES.IS_NOT_ALLOWED, ["Function constructor"]));
+		}
+
+		// Error.prepareStackTrace is a host-installed callback. It must be
+		// checked dynamically: the blocked-methods map is built lazily on first
+		// use, so a host that installs the callback *after* that point would
+		// otherwise evade the static blocklist.
+		if (func === Error.prepareStackTrace) {
+			throw new Error(renderErrorMessage(ERROR_MESSAGES.IS_NOT_ALLOWED, ["Error.prepareStackTrace"]));
 		}
 
 		if (getBlockedMethods().has(func)) {

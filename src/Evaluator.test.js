@@ -985,6 +985,69 @@ describe("Security and Restrictions", () => {
 			});
 		});
 
+		test("should block Error.captureStackTrace to prevent host prototype pollution", () => {
+			// Error.captureStackTrace(obj) installs a host `stack` property on
+			// any object - including Object.prototype - which would pollute the
+			// host and make every object inherit `.stack`.
+			assert.throws(() => evaluator.evaluate("Error.captureStackTrace(Object.prototype)"), {
+				message: "Error.captureStackTrace is not allowed",
+			});
+
+			// Computed property access must hit the same blocklist.
+			assert.throws(() => evaluator.evaluate("Error['captureStackTrace']({})"), {
+				message: "Error.captureStackTrace is not allowed",
+			});
+		});
+
+		test("should block invoking a host-installed Error.prepareStackTrace callback", () => {
+			// If the host has installed Error.prepareStackTrace, the sandbox
+			// must not be able to call it with attacker-controlled Error and
+			// frames arguments (this executes host code paths).
+			const original = Error.prepareStackTrace;
+			try {
+				Error.prepareStackTrace = (err, frames) => "host callback ran";
+				assert.throws(() => evaluator.evaluate("Error.prepareStackTrace(new Error(), [1])"), {
+					message: "Error.prepareStackTrace is not allowed",
+				});
+				assert.throws(() => evaluator.evaluate('Error["prepareStackTrace"](new Error(), [1])'), {
+					message: "Error.prepareStackTrace is not allowed",
+				});
+			} finally {
+				Error.prepareStackTrace = original;
+			}
+		});
+
+		test("should block reading .stack on Error instances", () => {
+			// Reading `.stack` materializes the stack, which internally invokes
+			// a host-installed Error.prepareStackTrace with sandbox-owned
+			// values - even if the sandbox never calls it directly.
+			assert.throws(() => evaluator.evaluate("(new Error()).stack"), {
+				message: "Accessing error stack is not allowed",
+			});
+			assert.throws(() => evaluator.evaluate("(new Error())['stack']"), {
+				message: "Accessing error stack is not allowed",
+			});
+			assert.throws(() => evaluator.evaluate("(new TypeError()).stack"), {
+				message: "Accessing error stack is not allowed",
+			});
+		});
+
+		test("should not leak arrow function parameter scope after an error", () => {
+			// A throwing arrow function must pop its parameter scope: a leaked
+			// scope would make the parameter binding visible to subsequent
+			// expressions evaluated on the same instance.
+			const evaluator = new Evaluator({});
+			const initialScopes = evaluator.scopes.length;
+
+			assert.throws(() => evaluator.evaluate("(x => x.a.b)(null)"), {
+				message: "Cannot read property of null (reading 'a')",
+			});
+			assert.equal(evaluator.scopes.length, initialScopes, "arrow function scope must be popped even on error");
+
+			// The leaked parameter must not be resolvable afterwards.
+			assert.throws(() => evaluator.evaluate("x"), { message: "x is not defined" });
+		});
+
 		test("should block argument because the FunctionExpression is disallowed", () => {
 			assert.throws(() => evaluator.evaluate("((function() { return arguments; })())"), {
 				message: "Function expression is not allowed",

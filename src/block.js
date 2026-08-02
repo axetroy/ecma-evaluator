@@ -182,6 +182,13 @@ const dangerousMethods = [
 	"Object.getOwnPropertyNames",
 	"Object.getOwnPropertySymbols",
 	"Object.getOwnPropertyDescriptors",
+
+	// Error reflection: Error.captureStackTrace(obj) installs a host `stack`
+	// property on any object - including Object.prototype - polluting the
+	// host. Error.prepareStackTrace is a host-installed callback that, if
+	// called with attacker-controlled Error/frames, executes host code paths.
+	"Error.captureStackTrace",
+	"Error.prepareStackTrace",
 ];
 
 // Some prototype-style aliases/properties that can be used to break sandboxes
