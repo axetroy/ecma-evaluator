@@ -880,6 +880,61 @@ describe("Security and Restrictions", () => {
 			}
 		});
 
+		test("should block escaping the Function constructor via plain property access", () => {
+			// The `.constructor` chain must never yield the `Function`
+			// constructor, even when it is only *read* and never called.
+			const fixtures = [
+				"({}).constructor.constructor",
+				"([]).constructor.constructor",
+				"\"\".constructor.constructor",
+				"Math.max.constructor",
+				"Math.max.constructor.constructor",
+				"[].flat.constructor",
+				"Promise.prototype.then.constructor",
+				"({}).constructor.constructor.prototype",
+			];
+
+			for (const code of fixtures) {
+				assert.throws(() => evaluator.evaluate(code), { message: "Function constructor is not allowed" });
+			}
+		});
+
+		test("should block sandbox escape via native callbacks (Promise.then / Array.map)", () => {
+			// Native callback mechanisms invoke their arguments in the host
+			// runtime, outside the interpreter's call path. A leaked `Function`
+			// reference passed as a callback would execute arbitrary code.
+			const fixtures = [
+				"Promise.resolve('x').then(({}).constructor.constructor)",
+				"[1].map(({}).constructor.constructor)",
+				"[1, 2].filter(({}).constructor.constructor)",
+				"[1, 2].reduce(({}).constructor.constructor)",
+				"Promise.resolve('x').then(({}).constructor.constructor).then(fn => fn())",
+			];
+
+			for (const code of fixtures) {
+				assert.throws(() => evaluator.evaluate(code), { message: "Function constructor is not allowed" });
+			}
+		});
+
+		test("should block leaking the Function constructor through async callbacks", async () => {
+			// The callback itself is a legitimate arrow function, so the call
+			// is synchronous - but the leaked constructor inside it must cause
+			// the resulting promise to reject instead of executing code.
+			await assert.rejects(evaluator.evaluate("Promise.resolve('x').then(fn => fn.constructor.constructor)"), {
+				message: "Function constructor is not allowed",
+			});
+			await assert.rejects(evaluator.evaluate("Promise.resolve('x').then(x => [x.constructor.constructor])"), {
+				message: "Function constructor is not allowed",
+			});
+		});
+
+		test("should keep legitimate native callbacks working", () => {
+			assert.deepEqual(evaluator.evaluate("[1, 2, 3].map(x => x * 2)"), [2, 4, 6]);
+			assert.deepEqual(evaluator.evaluate("[1, 2, 3].filter(x => x > 1)"), [2, 3]);
+			assert.equal(evaluator.evaluate("Math.max(1, 2, 3)"), 3);
+			assert.equal(evaluator.evaluate("Promise.resolve(42) instanceof Promise"), true);
+		});
+
 		test("should block accessing prototype properties", () => {
 			assert.throws(() => evaluator.evaluate("__proto__"), { message: "__proto__ is not defined" });
 			assert.throws(() => evaluator.evaluate("({}).__proto__"), { message: "Accessing prototype properties is not allowed" });

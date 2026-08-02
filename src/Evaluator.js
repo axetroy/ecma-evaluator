@@ -386,7 +386,19 @@ export class Evaluator {
 			throw new TypeError(renderErrorMessage(ERROR_MESSAGES.CAN_NOT_READ_PROPERTY, [object, property]));
 		}
 
-		return object[property];
+		const result = object[property];
+
+		// The Function constructor must never be reachable from an expression.
+		// If it escapes as a value, native callbacks (e.g. Promise.then,
+		// Array.prototype.map) invoke it outside the interpreter's call path,
+		// enabling arbitrary host code execution. This is a structural guard:
+		// no matter how many `.constructor` hops an expression takes, the
+		// final value can never be `Function` (or its prototype).
+		if (result === Function || result === Function.prototype) {
+			throw new Error(renderErrorMessage(ERROR_MESSAGES.IS_NOT_ALLOWED, ["Function constructor"]));
+		}
+
+		return result;
 	}
 
 	/**
@@ -499,6 +511,14 @@ export class Evaluator {
 		})();
 
 		const target = node.callee.type === "MemberExpression" ? this.visit(node.callee.object) : null;
+
+		// Defense in depth: even if a `Function` reference were somehow
+		// produced by an expression, it must not be passed as an argument.
+		// Native methods (Promise.then, Array.prototype.map, ...) would
+		// invoke it in the host runtime, outside this interpreter's checks.
+		if (args.some((arg) => arg === Function)) {
+			throw new Error(renderErrorMessage(ERROR_MESSAGES.IS_NOT_ALLOWED, ["Function constructor"]));
+		}
 
 		if (typeof func !== "function") {
 			const calledString = getNodeString(node.callee);
