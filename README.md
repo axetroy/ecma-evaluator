@@ -354,6 +354,7 @@ evalExpression("new Map([['a', 1], ['b', 2]])"); // Map {"a" => 1, "b" => 2}
 8. **Context cloning** - The context object passed to the evaluator is cloned to prevent external mutation
 9. **Bounded expression size** - `Evaluator` rejects expressions longer than 10,000 characters by default
 10. **No asynchronous escape** - `Promise` is removed from the sandbox entirely; any reference to it throws
+11. **Cloneable return values** - every result is passed through `structuredClone`, so closures (and other non-cloneable objects) cannot escape nested inside returned objects/arrays; the caller receives a deep copy, not a reference to sandbox internals
 
 > [!IMPORTANT]
 > The evaluator limits syntax and input size, but it cannot preempt CPU-intensive expressions or cap allocations made by built-ins. Evaluate untrusted input in an isolated Worker/thread/process with host-enforced time and memory limits.
@@ -395,6 +396,7 @@ evalExpression("delete obj.prop", { obj: { prop: 1 } });
 -   **Asynchronous escape** - `Promise` is removed from the sandbox entirely, so no async continuation can outlive an `evaluate()` call
 -   **Prototype pollution** - writes through `__proto__`, `Object.defineProperty`, `Object.prototype.constructor`, and `Error.captureStackTrace` are blocked, so the sandbox cannot tamper with shared prototypes
 -   **Host callback invocation** - calling a host-installed `Error.prepareStackTrace` is blocked, and reading `.stack` on an `Error` instance (which forces V8 to materialize the stack through that callback) is blocked too
+-   **Closure escape** - the return value of every expression is passed through `structuredClone`, so a closure (or any other non-cloneable object) smuggled inside a returned object or array - no matter how deeply nested - cannot escape `evaluate()` and keep reading sandbox scopes afterwards. The caller receives a deep copy, not a reference to sandbox internals
 -   **Host access & I/O** - `process`, `global`, `require`, and other runtime globals are not exposed, so file-system and network access are impossible
 
 #### Resource Boundaries
@@ -494,7 +496,8 @@ const isValid = evalExpression(validationRule, {
 6. **Limited error recovery** - Syntax errors will throw immediately
 7. **No imports/requires** - Cannot import external modules
 8. **Cloneable context only** - Context objects must be cloneable (no functions, DOM nodes, etc.)
-9. **Input length limit** - Expressions longer than the configured limit (10,000 characters by default) throw a `SyntaxError`
+9. **Cloneable results only** - Results must be cloneable (no functions, `Symbol` primitives in Node, `WeakRef`, `FinalizationRegistry`, etc.); attempting to return one throws
+10. **Input length limit** - Expressions longer than the configured limit (10,000 characters by default) throw a `SyntaxError`
 
 ## Advanced Usage
 

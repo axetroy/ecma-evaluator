@@ -253,6 +253,10 @@ export const blockedGlobalBuiltIns = [
 	"Reflect",
 	"Atomics",
 	"WebAssembly",
+	// SharedArrayBuffer escapes as a live reference to host shared memory
+	// (structuredClone copies the handle, not the memory) and its constructor
+	// allows multi-GiB allocations from ~20 characters of input
+	"SharedArrayBuffer",
 
 	// Asynchronous scheduling primitives that invoke callbacks in the host
 	// runtime after evaluate() returns, escaping synchronous error handling

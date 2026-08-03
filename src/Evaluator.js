@@ -205,7 +205,23 @@ export class Evaluator {
 			throw new Error(renderErrorMessage(ERROR_MESSAGES.IS_NOT_ALLOWED, ["Returning promises from expressions"]));
 		}
 
-		return result;
+		// Final gate: the return value must be cloneable, pure data. A
+		// function (or any non-cloneable object) smuggled inside an object or
+		// array - no matter how deeply nested - fails structuredClone with a
+		// DataCloneError. Without this, closures could escape evaluate() (e.g.
+		// `({ f: () => secret })`) and keep reading the evaluator's scopes
+		// (and host-passed objects) long after evaluate() returned. Cloning
+		// also hands the host a copy instead of a reference to sandbox
+		// internals, and it rejects WeakRef/FinalizationRegistry/Proxy and
+		// other host-only objects.
+		try {
+			return structuredClone(result);
+		} catch (error) {
+			if (error && error.name === "DataCloneError") {
+				throw new Error(renderErrorMessage(ERROR_MESSAGES.IS_NOT_ALLOWED, ["Returning non-cloneable values from expressions"]));
+			}
+			throw error;
+		}
 	}
 
 	/**
@@ -452,6 +468,14 @@ export class Evaluator {
 
 		for (let i = 0; i < node.elements.length; i++) {
 			const element = node.elements.at(i);
+
+			// Array holes (`[1, , 3]`) are represented as null elements by
+			// acorn. Preserve them instead of crashing on node.type access.
+			if (element === null) {
+				result.length++;
+				continue;
+			}
+
 			const value = this.visit(element);
 
 			if (element.type === "SpreadElement") {
@@ -475,9 +499,19 @@ export class Evaluator {
 				Object.assign(obj, this.visit(prop.argument));
 				continue;
 			}
-			const key = prop.key.name || prop.key.value;
+			// Computed keys must be *evaluated* (`{ [1 + 1]: v }` -> key "2"),
+			// not taken from the property name. Non-computed keys keep the
+			// literal `__proto__: v` semantics (which sets the prototype via
+			// the Object.prototype.__proto__ setter), while computed keys are
+			// plain properties: `{ ["__proto__"]: v }` must NOT touch the
+			// prototype.
+			const key = prop.computed ? this.visit(prop.key) : prop.key.name || prop.key.value;
 			const value = this.visit(prop.value);
-			obj[key] = value;
+			if (prop.computed) {
+				Object.defineProperty(obj, key, { value, writable: true, enumerable: true, configurable: true });
+			} else {
+				obj[key] = value;
+			}
 		}
 		return obj;
 	}

@@ -261,6 +261,18 @@ describe("Data Types", () => {
 			assert.equal(evaluator.evaluate("sparse[0]"), 1);
 			assert.equal(evaluator.evaluate("sparse[2]"), 3);
 		});
+
+		test("should preserve holes in array literals", () => {
+			// `[1,,3]` must keep the hole at index 1 (length 3, no own
+			// property "1") instead of crashing or collapsing the array.
+			const result = evaluator.evaluate("[1,,3]");
+			assert.equal(result.length, 3);
+			assert.equal(1 in result, false, "index 1 must remain a hole");
+			assert.equal(result[1], undefined);
+			assert.equal(result[0], 1);
+			assert.equal(result[2], 3);
+			assert.deepEqual(Array.from(result), [1, undefined, 3]);
+		});
 	});
 
 	describe("Objects", () => {
@@ -284,8 +296,24 @@ describe("Data Types", () => {
 
 		test("should handle computed property names", () => {
 			const evaluator = new Evaluator({ key: "myKey" });
-			assert.deepEqual(evaluator.evaluate("({ [key]: 42 })"), { key: 42 });
+			assert.deepEqual(evaluator.evaluate("({ [key]: 42 })"), { myKey: 42 });
 			assert.deepEqual(evaluator.evaluate('({ ["computed"]: 123 })'), { computed: 123 });
+			assert.deepEqual(evaluator.evaluate("({ [1 + 1]: 'two' })"), { 2: "two" });
+		});
+
+		test("should treat a computed __proto__ key as a plain property", () => {
+			// Per JS semantics, a *computed* `["__proto__"]` key is a regular
+			// own property and must NOT trigger the prototype setter (which
+			// would let the sandbox pollute Object.prototype). Only a literal
+			// `__proto__: v` key goes through the setter - and the evaluator
+			// writes literal keys via defineProperty-like assignment that the
+			// sandbox cannot use to reach the host prototype chain.
+			const result = evaluator.evaluate('({ ["__proto__"]: 1 })');
+			assert.equal(Object.getPrototypeOf(result), Object.prototype, "computed __proto__ must not change the prototype");
+			assert.equal(Object.prototype.hasOwnProperty.call(result, "__proto__"), true);
+			assert.equal(result["__proto__"], 1);
+			assert.equal(Object.getPrototypeOf(evaluator.evaluate('({ ["__proto__"]: { polluted: true } })')), Object.prototype);
+			assert.equal(({}).polluted, undefined, "host Object.prototype must stay clean");
 		});
 	});
 
@@ -1109,6 +1137,84 @@ describe("Security and Restrictions", () => {
 				}
 				assert.equal(result instanceof Promise, false, `"${code}" must not produce a Promise`);
 			}
+		});
+
+		test("should block closures smuggled inside objects and arrays", () => {
+			// A function nested anywhere in the return value - no matter how
+			// deep - must never escape evaluate(). Before the cloneable-return
+			// gate, `({ f: () => secret })` returned a closure that kept
+			// reading the evaluator's scopes (and host-passed objects) after
+			// evaluate() returned. structuredClone rejects it with a
+			// DataCloneError.
+			const evaluator = new Evaluator({ secret: "hunter2" });
+			const message = "Returning non-cloneable values from expressions is not allowed";
+
+			assert.throws(() => evaluator.evaluate("({ f: () => secret })"), { message });
+			assert.throws(() => evaluator.evaluate("[x => x]"), { message });
+			assert.throws(() => evaluator.evaluate("({ a: { b: () => secret } })"), { message });
+			assert.throws(() => evaluator.evaluate("[1, [2, [3, () => secret]]]"), { message });
+		});
+
+		test("should block host-only objects from escaping as return values", () => {
+			// WeakRef / FinalizationRegistry wrap host GC hooks and survive in
+			// the evaluator's scope only as long as the sandbox holds them.
+			// They are not cloneable, so they cannot escape evaluate().
+			const evaluator = new Evaluator({});
+			const message = "Returning non-cloneable values from expressions is not allowed";
+
+			assert.throws(() => evaluator.evaluate("new WeakRef({})"), { message });
+			assert.throws(() => evaluator.evaluate("new WeakRef({ f: () => 1 })"), { message });
+			assert.throws(() => evaluator.evaluate("new FinalizationRegistry(() => {})"), { message });
+		});
+
+		test("should block SharedArrayBuffer as a global builtin", () => {
+			// SharedArrayBuffer escapes as a live handle to host shared
+			// memory, and its constructor can request multi-GiB allocations
+			// from a handful of characters of input.
+			const evaluator = new Evaluator({});
+
+			assert.throws(() => evaluator.evaluate("new SharedArrayBuffer(8)"), { message: "SharedArrayBuffer is not defined" });
+			assert.throws(() => evaluator.evaluate("SharedArrayBuffer"), { message: "SharedArrayBuffer is not defined" });
+		});
+
+		test("should return pure data copies, not references to sandbox internals", () => {
+			// The cloneable-return gate hands the host a deep copy. Mutating
+			// it must not affect the evaluator's internal scope objects.
+			const evaluator = new Evaluator({ obj: { a: 1 } });
+
+			const returned = evaluator.evaluate("({ a: 1, b: obj })");
+			returned.b.a = 999;
+
+			assert.equal(evaluator.evaluate("obj.a"), 1, "mutating the returned copy must not affect the sandbox");
+		});
+
+		test("should still return legitimate cloneable values", () => {
+			const evaluator = new Evaluator({});
+
+			// structuredClone supports circular references, primitives, and
+			// host data structures such as Map/Set/Date/RegExp/BigInt.
+			assert.equal(evaluator.evaluate("42"), 42);
+			assert.equal(evaluator.evaluate("null"), null);
+			assert.equal(evaluator.evaluate("undefined"), undefined);
+			assert.equal(evaluator.evaluate("'str'"), "str");
+			assert.equal(evaluator.evaluate("BigInt(42)"), 42n);
+			assert.deepEqual(evaluator.evaluate("new Map([['a', 1]])").get("a"), 1);
+			assert.deepEqual(evaluator.evaluate("new Set([1, 2]).size"), 2);
+			assert.deepEqual(evaluator.evaluate("new Date(0)").getTime(), 0);
+			assert.deepEqual(evaluator.evaluate("/ab+c/").toString(), "/ab+c/");
+		});
+
+		test("should return a clone of circular context values", () => {
+			// A circular reference from the host context must survive the
+			// cloneable-return gate (structuredClone handles cycles).
+			const circular = { name: "root" };
+			circular.self = circular;
+			const evaluator = new Evaluator({ circular });
+
+			const result = evaluator.evaluate("circular");
+			assert.equal(result.name, "root");
+			assert.equal(result.self, result, "cycle must be preserved inside the returned copy");
+			assert.notEqual(result, circular, "must return a copy, not the host object");
 		});
 	});
 
