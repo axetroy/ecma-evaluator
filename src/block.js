@@ -181,7 +181,6 @@ const dangerousMethods = [
 	"Object.getOwnPropertyDescriptors",
 	"Object.getOwnPropertyNames",
 	"Object.getOwnPropertySymbols",
-	"Object.getOwnPropertyDescriptors",
 
 	// Error reflection: Error.captureStackTrace(obj) installs a host `stack`
 	// property on any object - including Object.prototype - polluting the

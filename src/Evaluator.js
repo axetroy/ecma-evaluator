@@ -20,6 +20,13 @@ const ERROR_MESSAGES = {
 const DEFAULT_MAX_INPUT_LENGTH = 10000;
 
 /**
+ * Sentinel used to distinguish "caller passed no pre-evaluated object" from
+ * "the object expression itself evaluated to undefined". See
+ * {@link Evaluator#handleMemberExpression}.
+ */
+const NO_OBJECT = Symbol("no-object");
+
+/**
  * Renders an error message by replacing placeholders with context values.
  * @param {string} template
  * @param {Record<string, any>} context
@@ -416,8 +423,8 @@ export class Evaluator {
 	 * Handles member expressions (property access like obj.prop or obj[prop]).
 	 * @private
 	 */
-	handleMemberExpression(node) {
-		const object = this.visit(node.object);
+	handleMemberExpression(node, objectValue = NO_OBJECT) {
+		const object = objectValue === NO_OBJECT ? this.visit(node.object) : objectValue;
 
 		// Determine property name: either identifier name or computed value
 		const isStaticProperty = node.property.type === "Identifier" && !node.computed;
@@ -553,9 +560,23 @@ export class Evaluator {
 	 * @private
 	 */
 	handleCallExpression(node) {
-		const func = this.visit(node.callee);
+		const isOptional = node.optional || (node.callee.type === "MemberExpression" && node.callee.optional);
+		let func;
+		let target = null;
 
-		const isOptional = node.optional || node.callee.optional;
+		if (node.callee.type === "MemberExpression") {
+			// Evaluate the object expression exactly once, then resolve the
+			// property through handleMemberExpression so that all of its
+			// guards (.stack access, prototype access, Function constructor)
+			// still apply. Visiting the whole callee and then the object again
+			// would double-evaluate side-effecting expressions such as
+			// `new Date(1000).getTime()` or `f().g()`.
+			target = this.visit(node.callee.object);
+			func = this.handleMemberExpression(node.callee, target);
+		} else {
+			func = this.visit(node.callee);
+		}
+
 		if ((func === undefined || func === null) && isOptional) {
 			return void 0;
 		}
@@ -598,8 +619,6 @@ export class Evaluator {
 
 			return result;
 		})();
-
-		const target = node.callee.type === "MemberExpression" ? this.visit(node.callee.object) : null;
 
 		// Defense in depth: even if a `Function` reference were somehow
 		// produced by an expression, it must not be passed as an argument.

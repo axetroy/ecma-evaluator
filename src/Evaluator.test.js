@@ -491,6 +491,38 @@ describe("Expressions", () => {
 		});
 	});
 
+	describe("Call Expression Object Evaluation", () => {
+		test("should evaluate the member call object exactly once", () => {
+			// Regression: the callee object used to be evaluated twice, so
+			// `new Date(1000).getTime()` created two Date instances and
+			// `arr.map(...)` processed the array twice.
+			assert.equal(evaluator.evaluate("new Date(1000).getTime()"), 1000);
+
+			const arrEvaluator = new Evaluator({ arr: [1, 2, 3] });
+			assert.deepEqual(arrEvaluator.evaluate("arr.map(x => x * 2)"), [2, 4, 6]);
+			assert.deepEqual(arrEvaluator.evaluate("arr.map(x => x + 1).filter(x => x > 2)"), [3, 4]);
+		});
+
+		test("should handle computed member calls", () => {
+			assert.equal(evaluator.evaluate("({ g: () => 42 })['g']()"), 42);
+		});
+
+		test("should keep optional chaining semantics on member calls", () => {
+			const evaluator = new Evaluator({ obj: null });
+			assert.equal(evaluator.evaluate("obj?.method()"), undefined);
+			assert.equal(evaluator.evaluate("obj?.method?.()"), undefined);
+		});
+
+		test("should keep guards when the member call object is pre-evaluated", () => {
+			// Accessing the prototype object itself is still blocked.
+			assert.throws(() => evaluator.evaluate("({}).__proto__"), {
+				message: "Accessing prototype properties is not allowed",
+			});
+			// Error instances remain usable as call objects (own props only).
+			assert.equal(evaluator.evaluate("new Error('x')['message']"), "x");
+		});
+	});
+
 	describe("Spread Operator", () => {
 		test("should handle spread in array literals", () => {
 			const evaluator = new Evaluator({ arr1: [1, 2], arr2: [3, 4] });

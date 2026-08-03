@@ -28,11 +28,20 @@ export function evalExpression(expression, context) {
 export function evalTemplate(template, context, templateParserOptions) {
 	let result = "";
 
+	// Reuse a single Evaluator instance for every expression in the template.
+	// `Evaluator.evaluate` builds a new instance per call, cloning the whole
+	// context via structuredClone for each expression - wasteful when a
+	// template contains many expressions. Reusing one instance is safe here:
+	// evaluate() never mutates the scope chain outside its own call (arrow
+	// function scopes are pushed and popped in a finally block), and closures
+	// cannot escape because the cloneable-return gate rejects them.
+	const evaluator = new Evaluator(context);
+
 	const typeHandler = {
 		text: (token) => token.value,
 		expression: (token) => {
 			try {
-				return Evaluator.evaluate(token.value, context);
+				return evaluator.evaluate(token.value);
 			} catch (error) {
 				// Replace undefined variables with empty string for graceful degradation
 				if (error instanceof ReferenceError && error.message.endsWith("is not defined")) {

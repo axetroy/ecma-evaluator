@@ -365,7 +365,7 @@ The following built-in objects are available in the sandboxed environment:
 
 -   **Numbers & Math**: `Number`, `Math`, `Infinity`, `NaN`, `isNaN`, `isFinite`, `parseInt`, `parseFloat`
 -   **Strings**: `String`, `encodeURI`, `encodeURIComponent`, `decodeURI`, `decodeURIComponent`
--   **Data Structures**: `Array`, `Object`, `Set`, `WeakSet`, `Map`, `WeakMap`
+-   **Data Structures**: `Array`, `Object`, `Set`, `Map`
 -   **Date & Time**: `Date`
 -   **JSON**: `JSON`
 -   **Types**: `Boolean`, `Symbol`, `BigInt`, `RegExp`
@@ -496,7 +496,7 @@ const isValid = evalExpression(validationRule, {
 6. **Limited error recovery** - Syntax errors will throw immediately
 7. **No imports/requires** - Cannot import external modules
 8. **Cloneable context only** - Context objects must be cloneable (no functions, DOM nodes, etc.)
-9. **Cloneable results only** - Results must be cloneable (no functions, `Symbol` primitives in Node, `WeakRef`, `FinalizationRegistry`, etc.); attempting to return one throws
+9. **Cloneable results only** - Results must be cloneable (no functions, `Symbol` primitives in Node, `WeakRef`, `FinalizationRegistry`, `WeakMap`, `WeakSet`, etc.); attempting to return one throws
 10. **Input length limit** - Expressions longer than the configured limit (10,000 characters by default) throw a `SyntaxError`
 
 ## Advanced Usage

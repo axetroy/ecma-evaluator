@@ -365,7 +365,7 @@ evalExpression("new Map([['a', 1], ['b', 2]])"); // Map {"a" => 1, "b" => 2}
 
 -   **数字与数学**: `Number`, `Math`, `Infinity`, `NaN`, `isNaN`, `isFinite`, `parseInt`, `parseFloat`
 -   **字符串**: `String`, `encodeURI`, `encodeURIComponent`, `decodeURI`, `decodeURIComponent`
--   **数据结构**: `Array`, `Object`, `Set`, `WeakSet`, `Map`, `WeakMap`
+-   **数据结构**: `Array`, `Object`, `Set`, `Map`
 -   **日期与时间**: `Date`
 -   **JSON**: `JSON`
 -   **类型**: `Boolean`, `Symbol`, `BigInt`, `RegExp`
@@ -496,7 +496,7 @@ const isValid = evalExpression(validationRule, {
 6. **有限的错误恢复** - 语法错误将立即抛出
 7. **无导入/require** - 无法导入外部模块
 8. **上下文可克隆** - 上下文对象必须可克隆（不能包含函数、DOM 节点等）
-9. **结果可克隆** - 结果必须可克隆（不能包含函数、Node 中的 `Symbol` 原始值、`WeakRef`、`FinalizationRegistry` 等）；尝试返回这些值会抛出错误
+9. **结果可克隆** - 结果必须可克隆（不能包含函数、Node 中的 `Symbol` 原始值、`WeakRef`、`FinalizationRegistry`、`WeakMap`、`WeakSet` 等）；尝试返回这些值会抛出错误
 10. **输入长度限制** - 超过配置限制（默认 10,000 个字符）的表达式会抛出 `SyntaxError`
 
 ## 高级用法
