@@ -1,9 +1,21 @@
 import { defineConfig } from "vitepress";
 
+const base = "/ecma-evaluator/";
+
 export default defineConfig({
-	base: "/ecma-evaluator/",
+	base,
 	title: "ecma-evaluator",
 	description: "A safe JavaScript expression evaluator",
+	head: [
+		[
+			"script",
+			{},
+			`const path = window.location.pathname.replace(/\\/$/, "");
+if (navigator.language.toLowerCase().startsWith("zh") && path === "${base.slice(0, -1)}") {
+	window.location.replace("${base}zh-CN/" + window.location.search + window.location.hash);
+}`,
+		],
+	],
 	locales: {
 		root: {
 			label: "English",
