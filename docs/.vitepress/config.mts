@@ -28,6 +28,18 @@ if (navigator.language.toLowerCase().startsWith("zh") && path === "${base.slice(
 			lang: "zh-CN",
 			title: "ecma-evaluator",
 			description: "安全的 JavaScript 表达式求值器",
+			themeConfig: {
+				nav: [
+					{ text: "指南", link: "/zh-CN/guide/getting-started" },
+					{ text: "在线体验", link: "/zh-CN/#playground" },
+				],
+				sidebar: [
+					{
+						text: "指南",
+						items: [{ text: "快速开始", link: "/zh-CN/guide/getting-started" }],
+					},
+				],
+			},
 		},
 	},
 	themeConfig: {
@@ -45,19 +57,5 @@ if (navigator.language.toLowerCase().startsWith("zh") && path === "${base.slice(
 				items: [{ text: "Getting started", link: "/guide/getting-started" }],
 			},
 		],
-		locales: {
-			"/zh-CN/": {
-				nav: [
-					{ text: "指南", link: "/zh-CN/guide/getting-started" },
-					{ text: "在线体验", link: "/zh-CN/#playground" },
-				],
-				sidebar: [
-					{
-						text: "指南",
-						items: [{ text: "快速开始", link: "/zh-CN/guide/getting-started" }],
-					},
-				],
-			},
-		},
 	},
 });
