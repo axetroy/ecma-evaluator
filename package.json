@@ -30,6 +30,9 @@
         "test": "node --test **/*.test.js",
         "test:update-snapshots": "node --test-update-snapshots --test **/*.test.js",
         "build": "knip && rslib build",
+        "docs:dev": "vitepress dev docs",
+        "docs:build": "vitepress build docs",
+        "docs:preview": "vitepress preview docs",
         "prepack": "npm run build",
         "changeset:version": "changeset version",
         "release": "changeset publish"
