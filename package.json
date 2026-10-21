@@ -30,6 +30,9 @@
         "test": "node --test **/*.test.js",
         "test:update-snapshots": "node --test-update-snapshots --test **/*.test.js",
         "build": "knip && rslib build",
+        "docs:dev": "vitepress dev docs",
+        "docs:build": "vitepress build docs",
+        "docs:preview": "vitepress preview docs",
         "prepack": "npm run build",
         "changeset:version": "changeset version",
         "release": "changeset publish"
@@ -42,7 +45,8 @@
         "@types/node": "^22.14.1",
         "capture-stdio.js": "^1.0.2",
         "knip": "^5.53.0",
-        "typescript": "^5.9.3"
+        "typescript": "^5.9.3",
+        "vitepress": "1.6.4"
     },
     "keywords": [
         "expression",
