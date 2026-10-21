@@ -42,7 +42,8 @@
         "@types/node": "^22.14.1",
         "capture-stdio.js": "^1.0.2",
         "knip": "^5.53.0",
-        "typescript": "^5.9.3"
+        "typescript": "^5.9.3",
+        "vitepress": "1.6.4"
     },
     "keywords": [
         "expression",
