@@ -46,7 +46,7 @@ if (navigator.language.toLowerCase().startsWith("zh") && path === "${base.slice(
 			},
 		],
 		locales: {
-			"zh-CN": {
+			"/zh-CN/": {
 				nav: [
 					{ text: "指南", link: "/zh-CN/guide/getting-started" },
 					{ text: "在线体验", link: "/zh-CN/#playground" },
