@@ -11,10 +11,72 @@ const props = defineProps({
 
 const isChinese = computed(() => props.locale === "zh-CN");
 const mode = ref("expression");
-const source = ref("a + b * c");
-const context = ref('{\n  "a": 1,\n  "b": 2,\n  "c": 3\n}');
+const examples = {
+	expression: [
+		{
+			id: "arithmetic",
+			label: { en: "Arithmetic", zh: "算术运算" },
+			source: "a + b * c",
+			context: '{\n  "a": 1,\n  "b": 2,\n  "c": 3\n}',
+		},
+		{
+			id: "conditional",
+			label: { en: "Conditional expression", zh: "条件表达式" },
+			source: 'user.isMember ? "Welcome back, " + user.name : "Join us, " + user.name',
+			context: '{\n  "user": {\n    "name": "Ada",\n    "isMember": true\n  }\n}',
+		},
+		{
+			id: "array",
+			label: { en: "Array methods", zh: "数组方法" },
+			source: "scores.map(score => score * 2)",
+			context: '{\n  "scores": [10, 20, 30]\n}',
+		},
+	],
+	template: [
+		{
+			id: "greeting",
+			label: { en: "Personalized greeting", zh: "个性化问候" },
+			source: "Hello, {{ user.name }}!",
+			context: '{\n  "user": {\n    "name": "Ada"\n  }\n}',
+		},
+		{
+			id: "conditional",
+			label: { en: "Conditional template", zh: "条件模板" },
+			source: '{{ user.isMember ? "Welcome back, " + user.name : "Join us, " + user.name }}!',
+			context: '{\n  "user": {\n    "name": "Ada",\n    "isMember": true\n  }\n}',
+		},
+		{
+			id: "product",
+			label: { en: "Product description", zh: "商品介绍" },
+			source: "{{ product.name }} — ${{ product.price }}",
+			context: '{\n  "product": {\n    "name": "Notebook",\n    "price": 12.5\n  }\n}',
+		},
+	],
+};
+const selectedExample = ref(examples.expression[0].id);
+const source = ref(examples.expression[0].source);
+const context = ref(examples.expression[0].context);
 const result = ref("");
 const error = ref("");
+
+function applyExample() {
+	const example = examples[mode.value].find(
+		(item) => item.id === selectedExample.value,
+	);
+
+	if (example) {
+		source.value = example.source;
+		context.value = example.context;
+	}
+
+	error.value = "";
+	result.value = "";
+}
+
+function changeMode() {
+	selectedExample.value = examples[mode.value][0].id;
+	applyExample();
+}
 
 function run() {
 	error.value = "";
@@ -44,9 +106,21 @@ function run() {
 		<div class="playground__controls">
 			<label>
 				<span>{{ isChinese ? "模式" : "Mode" }}</span>
-				<select v-model="mode">
+				<select v-model="mode" @change="changeMode">
 					<option value="expression">{{ isChinese ? "表达式" : "Expression" }}</option>
 					<option value="template">{{ isChinese ? "模板" : "Template" }}</option>
+				</select>
+			</label>
+			<label>
+				<span>{{ isChinese ? "示例" : "Example" }}</span>
+				<select v-model="selectedExample" @change="applyExample">
+					<option
+						v-for="example in examples[mode]"
+						:key="example.id"
+						:value="example.id"
+					>
+						{{ isChinese ? example.label.zh : example.label.en }}
+					</option>
 				</select>
 			</label>
 		</div>
