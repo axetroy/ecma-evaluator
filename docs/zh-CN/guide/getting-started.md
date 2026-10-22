@@ -29,6 +29,6 @@ evalTemplate("你好，{{ name }}！", { name: "世界" }); // "你好，世界�
 
 ## 安全性
 
-求值器支持表达式，而不是任意 JavaScript 语句。它不开放 `eval()` 或 `Function` 构造函数，并会阻止可变方法。详情请参阅[项目 README](https://github.com/axetroy/ecma-evaluator#安全特性)。
+求值器支持表达式，而不是任意 JavaScript 语句。它不开放 `eval()` 或 `Function` 构造函数，并会阻止可变方法。详情请参阅[参考文档](/zh-CN/guide/reference#安全特性)。
 
 也可以在[在线体验](/zh-CN/#playground)中试用表达式。
