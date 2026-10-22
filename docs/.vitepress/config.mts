@@ -36,7 +36,10 @@ if (navigator.language.toLowerCase().startsWith("zh") && path === "${base.slice(
 				sidebar: [
 					{
 						text: "指南",
-						items: [{ text: "快速开始", link: "/zh-CN/guide/getting-started" }],
+						items: [
+							{ text: "快速开始", link: "/zh-CN/guide/getting-started" },
+							{ text: "参考文档", link: "/zh-CN/guide/reference" },
+						],
 					},
 				],
 			},
@@ -49,12 +52,16 @@ if (navigator.language.toLowerCase().startsWith("zh") && path === "${base.slice(
 		},
 		nav: [
 			{ text: "Guide", link: "/guide/getting-started" },
+			{ text: "Reference", link: "/guide/reference" },
 			{ text: "Playground", link: "/#playground" },
 		],
 		sidebar: [
 			{
 				text: "Guide",
-				items: [{ text: "Getting started", link: "/guide/getting-started" }],
+				items: [
+					{ text: "Getting started", link: "/guide/getting-started" },
+					{ text: "Reference", link: "/guide/reference" },
+				],
 			},
 		],
 	},
