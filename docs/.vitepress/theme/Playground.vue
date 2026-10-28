@@ -1,5 +1,7 @@
 <script setup>
-import { computed, ref } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
+import EditorWorker from "monaco-editor/editor/editor.worker.js?worker";
+import TypeScriptWorker from "monaco-editor/language/typescript/ts.worker.js?worker";
 import { evalExpression, evalTemplate } from "../../../src/index.js";
 
 const props = defineProps({
@@ -58,6 +60,87 @@ const source = ref(examples.expression[0].source);
 const context = ref(examples.expression[0].context);
 const result = ref("");
 const error = ref("");
+const apiEditorElement = ref(null);
+const apiEditorReady = ref(false);
+const apiCall = computed(() => {
+	const functionName =
+		mode.value === "template" ? "evalTemplate" : "evalExpression";
+	let formattedContext;
+
+	try {
+		formattedContext =
+			JSON.stringify(JSON.parse(context.value || "{}"), null, 2) ?? "{}";
+		if (formattedContext === "{}") {
+			formattedContext = "{\n}";
+		}
+	} catch {
+		formattedContext = context.value || "{}";
+	}
+
+	const contextSource = formattedContext
+		.split("\n")
+		.map((line) => `\t${line}`)
+		.join("\n");
+
+	return `${functionName}(\n\t${JSON.stringify(source.value)},\n${contextSource}\n);`;
+});
+const apiEditorHeight = computed(
+	() => `${Math.min(Math.max(apiCall.value.split("\n").length * 20 + 20, 120), 360)}px`,
+);
+let apiEditor;
+let componentUnmounted = false;
+
+onMounted(async () => {
+	try {
+		const monaco = await import("monaco-editor");
+
+		if (componentUnmounted || !apiEditorElement.value) {
+			return;
+		}
+
+		self.MonacoEnvironment = {
+			getWorker(_workerId, label) {
+				return label === "javascript" || label === "typescript"
+					? new TypeScriptWorker()
+					: new EditorWorker();
+			},
+		};
+
+		apiEditor = monaco.editor.create(apiEditorElement.value, {
+			value: apiCall.value,
+			language: "javascript",
+			theme: "vs-dark",
+			readOnly: true,
+			domReadOnly: true,
+			automaticLayout: true,
+			minimap: { enabled: false },
+			lineNumbers: "on",
+			folding: false,
+			wordWrap: "on",
+			renderLineHighlight: "none",
+			scrollBeyondLastLine: false,
+			fontSize: 13,
+			lineHeight: 20,
+			padding: { top: 10, bottom: 10 },
+		});
+		apiEditorReady.value = true;
+	} catch (cause) {
+		console.error("Failed to load Monaco Editor", cause);
+	}
+});
+
+watch(apiCall, (value) => {
+	apiEditor?.setValue(value);
+});
+
+watch(apiEditorHeight, () => {
+	apiEditor?.layout();
+});
+
+onBeforeUnmount(() => {
+	componentUnmounted = true;
+	apiEditor?.dispose();
+});
 
 function applyExample() {
 	const example = examples[mode.value].find(
@@ -139,6 +222,19 @@ function run() {
 			{{ isChinese ? "运行" : "Run" }}
 		</button>
 
+		<div class="playground__output playground__api-call">
+			<span>{{ isChinese ? "API 调用" : "API call" }}</span>
+			<div
+				class="playground__editor"
+				role="region"
+				:aria-label="isChinese ? 'API 调用代码' : 'API call code'"
+				:style="{ height: apiEditorHeight }"
+			>
+				<div ref="apiEditorElement" class="playground__editor-canvas" />
+				<pre v-if="!apiEditorReady" class="playground__editor-fallback">{{ apiCall }}</pre>
+			</div>
+		</div>
+
 		<div v-if="result || error" class="playground__output" aria-live="polite">
 			<span>{{ isChinese ? "结果" : "Result" }}</span>
 			<pre :class="{ 'playground__error': error }">{{ error || result }}</pre>
@@ -213,6 +309,39 @@ function run() {
 	border-radius: 6px;
 	background: var(--vp-c-bg);
 	white-space: pre-wrap;
+}
+
+.playground__editor {
+	position: relative;
+	overflow: hidden;
+	margin-top: 0.5rem;
+	border: 1px solid var(--vp-c-divider);
+	border-radius: 6px;
+	background: #1e1e1e;
+}
+
+.playground__editor-canvas {
+	width: 100%;
+	height: 100%;
+	min-height: 0;
+	text-align: left;
+	font-family: var(--vp-font-family-mono);
+	font-size: 13px;
+	line-height: 20px;
+}
+
+.playground__editor-fallback {
+	position: absolute;
+	inset: 0;
+	overflow: auto;
+	margin: 0;
+	padding: 10px 1rem;
+	color: #d4d4d4;
+	background: #1e1e1e;
+	font-family: var(--vp-font-family-mono);
+	font-size: 13px;
+	line-height: 20px;
+	white-space: pre;
 }
 
 .playground__output .playground__error {

@@ -1,0 +1,7 @@
+packages:
+  - "."
+  - "fixtures/*"
+
+allowBuilds:
+  core-js: false
+  esbuild: true

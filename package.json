@@ -1,6 +1,7 @@
 {
     "name": "ecma-evaluator",
     "version": "2.0.9",
+    "packageManager": "pnpm@12.4.1",
     "private": false,
     "description": "A tiny and fast JavaScript expression evaluator.",
     "sideEffects": false,
@@ -33,7 +34,7 @@
         "docs:dev": "vitepress dev docs",
         "docs:build": "vitepress build docs",
         "docs:preview": "vitepress preview docs",
-        "prepack": "npm run build",
+        "prepack": "pnpm run build",
         "changeset:version": "changeset version",
         "release": "changeset publish"
     },
@@ -45,6 +46,7 @@
         "@types/node": "^22.14.1",
         "capture-stdio.js": "^1.0.2",
         "knip": "^5.53.0",
+        "monaco-editor": "^0.57.0",
         "typescript": "^5.9.3",
         "vitepress": "1.6.4"
     },
