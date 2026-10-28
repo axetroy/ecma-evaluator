@@ -2,7 +2,7 @@ name: release
 
 on:
   push:
-    branches: [main]
+    branches: [master]
 
 concurrency:
   group: release-${{ github.ref }}
@@ -19,15 +19,20 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 12.4.1
+
       - uses: actions/setup-node@v4
         with:
           node-version: 24
+          cache: pnpm
 
-      - run: npm install
+      - run: pnpm install --frozen-lockfile
 
       - uses: changesets/action@v1
         with:
-          version: npm run changeset:version
-          publish: npm run release
+          version: pnpm run changeset:version
+          publish: pnpm run release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

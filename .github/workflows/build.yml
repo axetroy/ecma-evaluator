@@ -11,17 +11,21 @@ jobs:
         os: [ubuntu-latest, macOS-latest, windows-latest]
     name: node.js ${{ matrix.node }} test in ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - uses: actions/setup-node@v3
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 12.4.1
+
+      - uses: actions/setup-node@v4
         with:
           node-version: ${{ matrix.node }}
-          registry-url: "https://registry.npmjs.org"
+          cache: pnpm
 
-      - name: Install
-        run: npm i
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
 
       - name: Test
-        run: npm run test
+        run: pnpm run test
