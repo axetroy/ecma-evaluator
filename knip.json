@@ -1,7 +1,9 @@
 {
 	"$schema": "https://unpkg.com/knip@5/schema.json",
 	"entry": [
-		"src/index.{js,ts,tsx}"
+		"src/index.{js,ts,tsx}",
+		"docs/.vitepress/config.mts",
+		"docs/.vitepress/theme/index.ts"
 	],
 	"ignore": [
 		"rslib.config.js",
