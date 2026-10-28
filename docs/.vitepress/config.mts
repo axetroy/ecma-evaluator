@@ -39,6 +39,7 @@ if (navigator.language.toLowerCase().startsWith("zh") && path === "${base.slice(
 						items: [
 							{ text: "快速开始", link: "/zh-CN/guide/getting-started" },
 							{ text: "参考文档", link: "/zh-CN/guide/reference" },
+							{ text: "语言与安全", link: "/zh-CN/guide/language" },
 						],
 					},
 				],
@@ -61,6 +62,7 @@ if (navigator.language.toLowerCase().startsWith("zh") && path === "${base.slice(
 				items: [
 					{ text: "Getting started", link: "/guide/getting-started" },
 					{ text: "Reference", link: "/guide/reference" },
+					{ text: "Language & security", link: "/guide/language" },
 				],
 			},
 		],

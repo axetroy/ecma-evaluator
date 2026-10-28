@@ -29,6 +29,6 @@ evalTemplate("Hello {{ name }}!", { name: "World" }); // "Hello World!"
 
 ## Security
 
-The evaluator supports expressions, not arbitrary JavaScript statements. It does not expose `eval()` or the `Function` constructor, and blocks mutating methods. See the [reference](/guide/reference#security-features) for details.
+The evaluator supports expressions, not arbitrary JavaScript statements. It does not expose `eval()` or the `Function` constructor, and blocks mutating methods. See [Language and security](/guide/language) for details.
 
 Try expressions in the [playground](/#playground).
