@@ -21,7 +21,7 @@ evalExpression("1 + 1; 2 + 3"); // 5 (the last expression's result)
 ```
 
 -   `expression` (`string`, required): Expression or semicolon-separated expression sequence. Maximum length is 10,000 UTF-16 code units by default.
--   `context` (`unknown`, optional): Cloneable data. Its own properties are available as identifiers. The evaluator clones it and does not mutate the caller's value.
+-   `context` (`unknown`, optional): Cloneable data without enumerable accessor properties. Its own data properties are available as identifiers. The evaluator validates and clones it without invoking getters.
 
 **Returns:** The last expression's result, cloned before it is returned. The result may be a primitive or cloneable data. `undefined` is valid; functions, promises, symbols, and other non-cloneable values are rejected.
 
@@ -38,7 +38,9 @@ evalTemplate("{{ missing }}", {}); // "undefined"
 
 -   `template` (`string`, required): Template text. A non-string value throws `TypeError`.
 -   `context` (`unknown`, optional): Cloneable data whose own properties are available to expressions. The evaluator clones it.
--   `templateParserOptions` (object, optional): Delimiter and whitespace options listed under [`TemplateParser`](#templateparser).
+-   `templateParserOptions` (object, optional): Delimiter and resource-limit options listed under [`TemplateParser`](#templateparser).
+
+Limits default to 100,000 template code units, 1,000 tokens, 100 expressions, 10,000 code units per expression, 10,000 AST visits per expression, and 100,000 output code units. Hard maxima are 1,000,000 template/output code units, 10,000 tokens, 1,000 expressions, and 100,000 expression code units/AST visits.
 
 **Returns:** A string. Expression results are converted using JavaScript string-concatenation semantics; for example, an array becomes comma-separated text and a plain object becomes `"[object Object]"`.
 
@@ -61,8 +63,14 @@ Each token contains `type` (`"text"` or `"expression"`), `value`, and zero-based
 | `expressionStart` | `string` | opening double brace | Opening delimiter |
 | `expressionEnd` | `string` | closing double brace | Closing delimiter |
 | `preserveWhitespace` | `boolean` | `false` | Keep whitespace around the expression in its token value |
+| `maxTemplateLength` | `number` | `100000` | Maximum template length (hard maximum `1000000`) |
+| `maxTokens` | `number` | `1000` | Maximum token count (hard maximum `10000`) |
+| `maxExpressions` | `number` | `100` | Maximum evaluated expressions in `evalTemplate` (hard maximum `1000`) |
+| `maxExpressionLength` | `number` | `10000` | Maximum expression length (hard maximum `100000`) |
+| `maxEvaluationSteps` | `number` | `10000` | Maximum AST visits per expression (hard maximum `100000`) |
+| `maxOutputLength` | `number` | `100000` | Maximum output length (hard maximum `1000000`) |
 
-`TemplateParser.parse(template, options?)` throws `TypeError` if `template` is not a string. Empty expressions are omitted by default. An unclosed expression with content is kept as text and emits `console.warn`.
+`TemplateParser.parse(template, options?)` throws `TypeError` if `template` is not a string. Empty expressions are omitted by default. An unclosed expression with content is kept as text without writing to the host console.
 
 ## `Evaluator`
 
@@ -74,12 +82,15 @@ evaluator.evaluate("price * quantity"); // 36
 Evaluator.evaluate("1 + 1"); // 2
 ```
 
--   `new Evaluator(variables?, options?)`: Clones `variables` (default: an empty object). The context must be supported by `structuredClone`.
--   `options.maxInputLength` (`number`, default `10000`): Maximum expression length in UTF-16 code units for this instance.
+-   `new Evaluator(variables?, options?)`: Validates then clones `variables` (default: an empty object). The context must be supported by `structuredClone` and cannot contain enumerable accessor properties.
+-   `options.maxInputLength` (`number`, default `10000`): Maximum expression length in UTF-16 code units (hard maximum `100000`).
+-   `options.maxEvaluationSteps` (`number`, default `10000`): Maximum AST node visits per evaluation (hard maximum `100000`).
 -   `evaluator.evaluate(expression)`: Evaluates with the instance context and options.
 -   `Evaluator.evaluate(expression, variables?)`: Static convenience method using default options.
 
 Both methods return the cloned result of the last expression and throw the same classes of errors as `evalExpression`. The static method does not accept an options argument.
+
+Contexts and results are also limited to 100,000 code units per string, an estimated 1,000,000 aggregate data bytes, 10,000 array/collection entries, and 100,000 data nodes. Array buffers and typed arrays are limited to 1,000,000 bytes. Regular expressions are supported without an execution-time limit; a pathological expression can block the main thread.
 
 ## TypeScript
 

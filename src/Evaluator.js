@@ -18,7 +18,30 @@ const ERROR_MESSAGES = {
  * Can be overridden per-instance via `new Evaluator(variables, { maxInputLength })`.
  */
 const DEFAULT_MAX_INPUT_LENGTH = 10000;
-
+const MAX_CONFIGURABLE_INPUT_LENGTH = 100000;
+const DEFAULT_MAX_EVALUATION_STEPS = 10000;
+const MAX_CONFIGURABLE_EVALUATION_STEPS = 100000;
+const MAX_ARRAY_LENGTH = 10000;
+const MAX_BUFFER_BYTES = 1000000;
+const MAX_STRING_LENGTH = 100000;
+const MAX_DATA_NODES = 100000;
+const MAX_BIGINT_EXPONENT = 256n;
+const MAX_BIGINT_BITS = 65536;
+const TYPED_ARRAY_CONSTRUCTORS = new Set(
+	[
+		Int8Array,
+		Uint8Array,
+		Uint8ClampedArray,
+		Int16Array,
+		Uint16Array,
+		Int32Array,
+		Uint32Array,
+		Float32Array,
+		Float64Array,
+		typeof BigInt64Array === "function" ? BigInt64Array : null,
+		typeof BigUint64Array === "function" ? BigUint64Array : null,
+	].filter((constructor) => typeof constructor === "function")
+);
 /**
  * Sentinel used to distinguish "caller passed no pre-evaluated object" from
  * "the object expression itself evaluated to undefined". See
@@ -36,6 +59,104 @@ const NO_OBJECT = Symbol("no-object");
  * ```
  */
 const renderErrorMessage = (template, context = {}) => template.replace(/{(\w+)}/g, (_, key) => String(context[key]));
+
+function validateLimit(value, name, defaultValue, maximum) {
+	if (value === undefined) {
+		return defaultValue;
+	}
+	if (!Number.isSafeInteger(value) || value < 1 || value > maximum) {
+		throw new RangeError(`${name} must be an integer between 1 and ${maximum}`);
+	}
+	return value;
+}
+
+function countLiteralMatches(value, search, all) {
+	if (search === "") {
+		return all ? value.length + 1 : 1;
+	}
+	let count = 0;
+	let position = 0;
+	while ((position = value.indexOf(search, position)) !== -1) {
+		count++;
+		if (!all) {
+			break;
+		}
+		position += search.length;
+	}
+	return count;
+}
+
+function assertBoundedData(value, label) {
+	const pending = [value];
+	const seen = new WeakSet();
+	let dataSize = 0;
+	let dataNodes = 0;
+	const enqueueProperties = (object) => {
+		const keys = Object.keys(object);
+		if (pending.length + keys.length > MAX_DATA_NODES) {
+			throw new RangeError(`${label} exceeds the maximum data node count`);
+		}
+		for (const key of keys) {
+			dataSize += key.length;
+			const descriptor = Object.getOwnPropertyDescriptor(object, key);
+			if (!descriptor || !Object.hasOwn(descriptor, "value")) {
+				throw new TypeError(`${label} cannot contain accessor properties`);
+			}
+			pending.push(descriptor.value);
+		}
+	};
+
+	while (pending.length > 0) {
+		const current = pending.pop();
+		dataNodes++;
+		if (dataNodes > MAX_DATA_NODES) {
+			throw new RangeError(`${label} exceeds the maximum data node count`);
+		}
+
+		if (typeof current === "string") {
+			if (current.length > MAX_STRING_LENGTH) {
+				throw new RangeError(`${label} contains a string that exceeds the maximum length`);
+			}
+			dataSize += current.length + 8;
+		} else if (current === null || (typeof current !== "object" && typeof current !== "function")) {
+			dataSize += 8;
+			continue;
+		} else if (typeof current === "function" || seen.has(current)) {
+			continue;
+		} else {
+			seen.add(current);
+			dataSize += 16;
+			if (current instanceof ArrayBuffer || ArrayBuffer.isView(current)) {
+				dataSize += current.byteLength;
+			} else if (Array.isArray(current)) {
+				if (current.length > MAX_ARRAY_LENGTH) {
+					throw new RangeError(`${label} contains an array that exceeds the maximum length`);
+				}
+				dataSize += current.length * 8;
+				enqueueProperties(current);
+			} else if (current instanceof Map) {
+				if (current.size > MAX_ARRAY_LENGTH) {
+					throw new RangeError(`${label} contains a map that exceeds the maximum size`);
+				}
+				dataSize += current.size * 16;
+				Map.prototype.forEach.call(current, (item, key) => pending.push(key, item));
+			} else if (current instanceof Set) {
+				if (current.size > MAX_ARRAY_LENGTH) {
+					throw new RangeError(`${label} contains a set that exceeds the maximum size`);
+				}
+				dataSize += current.size * 8;
+				Set.prototype.forEach.call(current, (item) => pending.push(item));
+			} else {
+				enqueueProperties(current);
+			}
+		}
+
+		if (dataSize > MAX_BUFFER_BYTES) {
+			throw new RangeError(`${label} exceeds the maximum data size`);
+		}
+	}
+	return { dataSize, dataNodes };
+}
 
 const BINARY_OPERATION_MAP = {
 	"+": (a, b) => a + b,
@@ -140,12 +261,19 @@ export class Evaluator {
 	 * The scope hierarchy is: user variables -> global scope
 	 * @param {Object} [variables={}] - An optional object containing variables to make available in the evaluation context
 	 * @param {Object} [options={}] - Additional configuration options
-	 * @param {number} [options.maxInputLength=10000] - Maximum allowed length (in characters) of an expression
+	 * @param {number} [options.maxInputLength=10000] - Maximum expression length (hard maximum: 100000)
+	 * @param {number} [options.maxEvaluationSteps=10000] - Maximum AST node visits per evaluation (hard maximum: 100000)
 	 */
 	constructor(variables = Object.create(null), options) {
-		this.scopes = [structuredClone(variables), createGlobalScope()].filter((scope) => scope !== null && scope !== undefined);
+		this.maxInputLength = validateLimit(options?.maxInputLength, "maxInputLength", DEFAULT_MAX_INPUT_LENGTH, MAX_CONFIGURABLE_INPUT_LENGTH);
+		this.maxEvaluationSteps = validateLimit(options?.maxEvaluationSteps, "maxEvaluationSteps", DEFAULT_MAX_EVALUATION_STEPS, MAX_CONFIGURABLE_EVALUATION_STEPS);
+		assertBoundedData(variables, "Evaluation context");
+		const clonedVariables = structuredClone(variables);
+		this.scopes = [clonedVariables, createGlobalScope()].filter((scope) => scope !== null && scope !== undefined);
 		this.source = undefined;
-		this.maxInputLength = (options ?? {}).maxInputLength ?? DEFAULT_MAX_INPUT_LENGTH;
+		this.remainingEvaluationSteps = 0;
+		this.remainingDataSize = MAX_BUFFER_BYTES;
+		this.remainingDataNodes = MAX_DATA_NODES;
 	}
 
 	/**
@@ -177,6 +305,9 @@ export class Evaluator {
 		}
 
 		this.source = expression;
+		this.remainingEvaluationSteps = this.maxEvaluationSteps;
+		this.remainingDataSize = MAX_BUFFER_BYTES;
+		this.remainingDataNodes = MAX_DATA_NODES;
 
 		const ast = acorn.parse(expression, { ecmaVersion: "latest" });
 
@@ -195,6 +326,11 @@ export class Evaluator {
 	 * @returns {*} The result of the last executed node
 	 */
 	execute(body) {
+		if (this.remainingEvaluationSteps === 0) {
+			this.remainingEvaluationSteps = this.maxEvaluationSteps;
+			this.remainingDataSize = MAX_BUFFER_BYTES;
+			this.remainingDataNodes = MAX_DATA_NODES;
+		}
 		let result;
 
 		for (const node of body) {
@@ -204,6 +340,8 @@ export class Evaluator {
 		if (typeof result === "function") {
 			throw new Error(renderErrorMessage(ERROR_MESSAGES.IS_NOT_ALLOWED, ["Returning functions from expressions"]));
 		}
+
+		assertBoundedData(result, "Evaluation result");
 
 		// A leaked Promise schedules sandbox callbacks (and rejection errors)
 		// in the host microtask queue, outside the caller's try/catch. Never
@@ -238,6 +376,11 @@ export class Evaluator {
 	 * @returns {*} The result of visiting the node
 	 */
 	visit(node) {
+		this.remainingEvaluationSteps--;
+		if (this.remainingEvaluationSteps < 0) {
+			throw new RangeError("Evaluation step limit exceeded");
+		}
+
 		switch (node.type) {
 			case "ExpressionStatement": {
 				return this.visit(node.expression);
@@ -297,11 +440,11 @@ export class Evaluator {
 				if (node.callee.name === "Promise") {
 					throw new Error(renderErrorMessage(ERROR_MESSAGES.IS_NOT_ALLOWED, ["Promise constructor"]));
 				}
-
 				const Constructor = this.visit(node.callee);
 
 				// 仅在存在参数时构建数组
 				const args = node.arguments.length ? node.arguments.map((arg) => this.visit(arg)) : [];
+				this.assertBoundedConstruction(Constructor, args);
 
 				return new Constructor(...args);
 			}
@@ -338,12 +481,66 @@ export class Evaluator {
 		const op = node.operator;
 		const left = this.visit(node.left);
 		const right = this.visit(node.right);
+		if (op === "+" && (typeof left === "string" || typeof right === "string")) {
+			if (String(left).length + String(right).length > MAX_STRING_LENGTH) {
+				throw new RangeError("String result exceeds the maximum allowed length");
+			}
+		}
+		if (typeof left === "bigint" && typeof right === "bigint") {
+			if (op === "**" && (right > MAX_BIGINT_EXPONENT || right < 0n)) {
+				throw new RangeError(`BigInt exponent must be between 0 and ${MAX_BIGINT_EXPONENT}`);
+			}
+			const leftBits = left.toString(2).length;
+			const rightBits = right.toString(2).length;
+			if (
+				(op === "**" && leftBits * Number(right) > MAX_BIGINT_BITS) ||
+				(op === "<<" && right > BigInt(MAX_BIGINT_BITS)) ||
+				(op === "<<" && right >= 0n && leftBits + Number(right) > MAX_BIGINT_BITS) ||
+				(op === "*" && leftBits + rightBits > MAX_BIGINT_BITS) ||
+				((op === "+" || op === "-") && Math.max(leftBits, rightBits) + 1 > MAX_BIGINT_BITS)
+			) {
+				throw new RangeError("BigInt result exceeds the maximum allowed size");
+			}
+		}
 
 		if (BINARY_OPERATION_MAP.hasOwnProperty(op)) {
 			return BINARY_OPERATION_MAP[op](left, right);
 		}
 
 		throw new SyntaxError(`Unsupported operator: ${node.operator}`);
+	}
+
+	assertBoundedConstruction(Constructor, args) {
+		const size = args[0];
+		if (Constructor === Array && args.length === 1 && typeof size === "number" && size > MAX_ARRAY_LENGTH) {
+			throw new RangeError("Array length exceeds the maximum allowed length");
+		}
+		if (Constructor === ArrayBuffer && (size > MAX_BUFFER_BYTES || args[1]?.maxByteLength > MAX_BUFFER_BYTES)) {
+			throw new RangeError("ArrayBuffer size exceeds the maximum allowed size");
+		}
+		if (Constructor === DataView && size instanceof ArrayBuffer && size.byteLength > MAX_BUFFER_BYTES) {
+			throw new RangeError("DataView size exceeds the maximum allowed size");
+		}
+		if (Constructor === Map || Constructor === Set) {
+			const collectionSize = typeof size === "string" || Array.isArray(size) ? size.length : size?.size ?? size?.length;
+			if (typeof collectionSize === "number" && collectionSize > MAX_ARRAY_LENGTH) {
+				throw new RangeError("Collection source exceeds the maximum allowed size");
+			}
+		}
+		if (TYPED_ARRAY_CONSTRUCTORS.has(Constructor)) {
+			let byteLength;
+			if (size instanceof ArrayBuffer) {
+				const offset = args[1] ?? 0;
+				const elementCount = args[2] ?? Math.floor((size.byteLength - offset) / Constructor.BYTES_PER_ELEMENT);
+				byteLength = elementCount * Constructor.BYTES_PER_ELEMENT;
+			} else {
+				const elementCount = typeof size === "number" ? size : size?.length ?? 0;
+				byteLength = elementCount * Constructor.BYTES_PER_ELEMENT;
+			}
+			if (byteLength > MAX_BUFFER_BYTES) {
+				throw new RangeError("Typed array size exceeds the maximum allowed size");
+			}
+		}
 	}
 
 	/**
@@ -425,7 +622,6 @@ export class Evaluator {
 	 */
 	handleMemberExpression(node, objectValue = NO_OBJECT) {
 		const object = objectValue === NO_OBJECT ? this.visit(node.object) : objectValue;
-
 		// Determine property name: either identifier name or computed value
 		const isStaticProperty = node.property.type === "Identifier" && !node.computed;
 		const property = isStaticProperty ? node.property.name : this.visit(node.property);
@@ -486,6 +682,7 @@ export class Evaluator {
 			const value = this.visit(element);
 
 			if (element.type === "SpreadElement") {
+				this.assertBoundedSpread(result.length, value);
 				result.push(...value);
 			} else {
 				result.push(value);
@@ -495,15 +692,28 @@ export class Evaluator {
 		return result;
 	}
 
+	assertBoundedSpread(currentLength, value) {
+		const size = typeof value === "string" || Array.isArray(value) ? value.length : value?.size;
+		if (typeof size === "number" && currentLength + size > MAX_ARRAY_LENGTH) {
+			throw new RangeError("Spread value exceeds the maximum allowed length");
+		}
+	}
+
 	/**
 	 * Handles object literal expressions.
 	 * @returns
 	 */
 	handleObjectExpression(node) {
 		const obj = {};
+		let spreadPropertyCount = 0;
 		for (const prop of node.properties) {
 			if (prop.type === "SpreadElement") {
-				Object.assign(obj, this.visit(prop.argument));
+				const spreadValue = this.visit(prop.argument);
+				spreadPropertyCount += Object.keys(spreadValue).length;
+				if (spreadPropertyCount > MAX_ARRAY_LENGTH) {
+					throw new RangeError("Object spread exceeds the maximum allowed property count");
+				}
+				Object.assign(obj, spreadValue);
 				continue;
 			}
 			// Computed keys must be *evaluated* (`{ [1 + 1]: v }` -> key "2"),
@@ -548,11 +758,22 @@ export class Evaluator {
 			// instance.
 			this.scopes.unshift(newScope);
 			try {
-				return this.visit(node.body);
+				const result = this.visit(node.body);
+				this.consumeEvaluationValue(result);
+				return result;
 			} finally {
 				this.scopes.shift();
 			}
 		};
+	}
+
+	consumeEvaluationValue(value) {
+		const { dataSize, dataNodes } = assertBoundedData(value, "Intermediate evaluation result");
+		this.remainingDataSize -= dataSize;
+		this.remainingDataNodes -= dataNodes;
+		if (this.remainingDataSize < 0 || this.remainingDataNodes < 0) {
+			throw new RangeError("Evaluation allocation budget exceeded");
+		}
 	}
 
 	/**
@@ -584,7 +805,6 @@ export class Evaluator {
 		if (func === Function) {
 			throw new Error(renderErrorMessage(ERROR_MESSAGES.IS_NOT_ALLOWED, ["Function constructor"]));
 		}
-
 		// Error.prepareStackTrace is a host-installed callback. It must be
 		// checked dynamically: the blocked-methods map is built lazily on first
 		// use, so a host that installs the callback *after* that point would
@@ -611,6 +831,7 @@ export class Evaluator {
 				const value = this.visit(element);
 
 				if (element.type === "SpreadElement") {
+					this.assertBoundedSpread(result.length, value);
 					result.push(...value);
 				} else {
 					result.push(value);
@@ -626,6 +847,49 @@ export class Evaluator {
 		// invoke it in the host runtime, outside this interpreter's checks.
 		if (args.some((arg) => arg === Function)) {
 			throw new Error(renderErrorMessage(ERROR_MESSAGES.IS_NOT_ALLOWED, ["Function constructor"]));
+		}
+		if (typeof target === "string") {
+			if (String.prototype.repeat && func === String.prototype.repeat && target.length * Number(args[0]) > MAX_STRING_LENGTH) {
+				throw new RangeError("String result exceeds the maximum allowed length");
+			}
+			if ((String.prototype.padStart && func === String.prototype.padStart || func === String.prototype.padEnd) && Number(args[0]) > MAX_STRING_LENGTH) {
+				throw new RangeError("String result exceeds the maximum allowed length");
+			}
+			if (String.prototype.concat && func === String.prototype.concat) {
+				const resultLength = target.length + args.reduce((length, value) => length + String(value).length, 0);
+				if (resultLength > MAX_STRING_LENGTH) {
+					throw new RangeError("String result exceeds the maximum allowed length");
+				}
+			}
+			if ((String.prototype.replace && func === String.prototype.replace) || (String.prototype.replaceAll && func === String.prototype.replaceAll)) {
+				if (typeof args[0] === "string") {
+					if (typeof args[1] === "function" || (typeof args[1] === "string" && /\$(?:[$&'`])/u.test(args[1]))) {
+						throw new Error("Only literal string replacements are allowed");
+					}
+					if (target.length * Math.max(1, args[0].length) > 10000000) {
+						throw new RangeError("String operation exceeds the maximum work limit");
+					}
+					const matchCount = countLiteralMatches(target, args[0], func === String.prototype.replaceAll);
+					if (target.length + matchCount * String(args[1]).length > MAX_STRING_LENGTH) {
+						throw new RangeError("String result exceeds the maximum allowed length");
+					}
+				}
+			}
+			if (func === String.prototype.split) {
+				if (args[0] === "" && target.length > MAX_ARRAY_LENGTH) {
+					throw new RangeError("Split result exceeds the maximum allowed length");
+				}
+				if (typeof args[0] === "string" && args[0] !== "" && countLiteralMatches(target, args[0], true) >= MAX_ARRAY_LENGTH) {
+					throw new RangeError("Split result exceeds the maximum allowed length");
+				}
+			}
+		}
+		if ((target === Array || TYPED_ARRAY_CONSTRUCTORS.has(target)) && func === target.from) {
+			const source = args[0];
+			const size = typeof source === "string" || Array.isArray(source) ? source.length : source?.size ?? source?.length;
+			if (typeof size === "number" && size > MAX_ARRAY_LENGTH) {
+				throw new RangeError("Array.from source exceeds the maximum allowed length");
+			}
 		}
 
 		if (typeof func !== "function") {

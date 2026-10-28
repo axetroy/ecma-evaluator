@@ -26,7 +26,7 @@ Statements and declarations such as `if`, `for`, `const`, and function declarati
 
 ## Built-ins
 
-The sandbox exposes a restricted set of built-ins, including `Math`, `Number`, `String`, `Boolean`, `Array`, `Object`, `Map`, `Set`, `Date`, `JSON`, `RegExp`, selected typed arrays, and standard error constructors. It also exposes common numeric and URI helper functions. Availability can vary with the host runtime.
+The sandbox exposes a restricted set of built-ins, including `Math`, `Number`, `String`, `Boolean`, `Array`, `Object`, `Map`, `Set`, `Date`, `RegExp`, selected typed arrays, and standard error constructors. It also exposes common numeric and URI helper functions. Regular expressions are supported through literals, `RegExp`, and string methods.
 
 `Promise`, `Function`, `eval`, `process`, `require`, browser globals, and file/network APIs are not exposed. `WeakMap` and `WeakSet` instances cannot cross the structured-clone boundary. `Symbol` values likewise cannot be passed through that boundary.
 
@@ -34,7 +34,9 @@ The sandbox exposes a restricted set of built-ins, including `Math`, `Number`, `
 
 The evaluator blocks mutating methods on arrays, objects, collections, dates, typed arrays, and selected web APIs. For example, calls such as `array.push(...)`, `map.set(...)`, and `date.setTime(...)` are rejected. Object/prototype mutation and prototype-property access are restricted as well.
 
-The input context is cloned before evaluation, and the result is cloned before it is returned. Both must be supported by `structuredClone`; functions, promises, DOM nodes, weak collections, and symbols cannot be passed as context values or returned. The evaluator does not provide a general-purpose JavaScript isolation boundary; use it for constrained expression evaluation and handle failures from user-provided input.
+The input context is checked before cloning; enumerable accessor properties are rejected without invoking their getters. The result is cloned before it is returned. Both must be supported by `structuredClone`; functions, promises, DOM nodes, weak collections, and symbols cannot be passed as context values or returned. Input length, AST visits, data size, array/buffer construction, intermediate callback allocations, template expression count, and output length are bounded.
+
+Evaluation is synchronous. Resource budgets do not interrupt a native operation after it starts; in particular, regular expressions have no execution-time limit and may block the main thread. Do not run untrusted expressions on a latency-sensitive main thread or treat the evaluator as a general-purpose isolation boundary.
 
 ## Errors
 

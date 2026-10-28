@@ -26,7 +26,7 @@ evalExpression("[1, 2, 3].map(value => value * 2)"); // [2, 4, 6]
 
 ## 内置对象
 
-沙箱开放一组受限内置对象，包括 `Math`、`Number`、`String`、`Boolean`、`Array`、`Object`、`Map`、`Set`、`Date`、`JSON`、`RegExp`、部分类型化数组和标准错误构造函数，也开放常用数值及 URI 辅助函数。具体可用项可能受宿主运行时影响。
+沙箱开放一组受限内置对象，包括 `Math`、`Number`、`String`、`Boolean`、`Array`、`Object`、`Map`、`Set`、`Date`、`RegExp`、部分类型化数组和标准错误构造函数，也开放常用数值及 URI 辅助函数。正则表达式可通过字面量、`RegExp` 和字符串方法使用。
 
 沙箱不开放 `Promise`、`Function`、`eval`、`process`、`require`、浏览器全局对象以及文件/网络 API。`WeakMap` 和 `WeakSet` 实例不能通过结构化克隆边界；`Symbol` 值也不能通过该边界传递。
 
@@ -34,7 +34,9 @@ evalExpression("[1, 2, 3].map(value => value * 2)"); // [2, 4, 6]
 
 求值器会阻止数组、对象、集合、日期、类型化数组和部分 Web API 的可变方法，例如 `array.push(...)`、`map.set(...)` 和 `date.setTime(...)`。对象/原型变更及原型属性访问也受到限制。
 
-求值前会克隆上下文，返回前会克隆结果；两者都必须受 `structuredClone` 支持。函数、Promise、DOM 节点、弱集合和 Symbol 不能作为上下文值传入或作为结果返回。求值器不是通用 JavaScript 隔离边界；请将其用于受限表达式求值，并妥善处理用户输入导致的异常。
+上下文会在克隆前校验；可枚举访问器属性会被拒绝，且不会调用其 getter。结果在返回前克隆；两者都必须受 `structuredClone` 支持。函数、Promise、DOM 节点、弱集合和 Symbol 不能作为上下文值传入或作为结果返回。输入长度、AST 访问次数、数据大小、数组/缓冲区构造、回调中间分配、模板表达式数量和输出长度均有限制。
+
+求值在调用线程同步执行。资源预算无法中断已经开始的原生操作；尤其正则表达式没有执行时间上限，可能阻塞主线程。不要在对延迟敏感的主线程执行不可信表达式，也不要把求值器视为通用隔离边界。
 
 ## 异常
 

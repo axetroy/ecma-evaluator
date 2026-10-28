@@ -839,6 +839,20 @@ describe("Variables and Context", () => {
 		assert.throws(() => new Evaluator({ foo: (x) => x }), { message: "(x) => x could not be cloned." });
 	});
 
+	test("Should reject context accessors without invoking them", () => {
+		let getterCalls = 0;
+		const context = Object.defineProperty({}, "value", {
+			enumerable: true,
+			get() {
+				getterCalls++;
+				return 1;
+			},
+		});
+
+		assert.throws(() => new Evaluator(context), { message: "Evaluation context cannot contain accessor properties" });
+		assert.equal(getterCalls, 0);
+	});
+
 	test("Should handle context with various data types", () => {
 		class Man {
 			color = "green";
@@ -1311,6 +1325,87 @@ describe("Security and Restrictions", () => {
 			assert.throws(() => evaluator.evaluate(undefined), { message: "Expression must be a string" });
 		});
 	});
+
+	describe("Resource Limits", () => {
+		test("should load when BigInt typed arrays are unavailable", async () => {
+			const names = ["BigInt64Array", "BigUint64Array"];
+			const descriptors = names.map((name) => Object.getOwnPropertyDescriptor(globalThis, name));
+
+			try {
+				for (const name of names) {
+					Object.defineProperty(globalThis, name, { value: undefined, configurable: true });
+				}
+
+				const { Evaluator: CompatibleEvaluator } = await import("./Evaluator.js?without-bigint-typed-arrays");
+				assert.equal(new CompatibleEvaluator().evaluate("1 + 2"), 3);
+			} finally {
+				for (let index = 0; index < names.length; index++) {
+					if (descriptors[index]) {
+						Object.defineProperty(globalThis, names[index], descriptors[index]);
+					} else {
+						delete globalThis[names[index]];
+					}
+				}
+			}
+		});
+
+		test("should reject invalid and excessive evaluator limits", () => {
+			for (const maxInputLength of [0, -1, 1.5, NaN, Infinity, 100001]) {
+				assert.throws(() => new Evaluator({}, { maxInputLength }), RangeError);
+			}
+			for (const maxEvaluationSteps of [0, -1, 1.5, NaN, Infinity, 100001]) {
+				assert.throws(() => new Evaluator({}, { maxEvaluationSteps }), RangeError);
+			}
+		});
+
+		test("should bound AST visits per evaluation", () => {
+			const evaluator = new Evaluator({}, { maxEvaluationSteps: 4 });
+			assert.equal(evaluator.evaluate("1 + 2"), 3);
+			assert.throws(() => evaluator.evaluate("1 + 2 + 3"), { message: "Evaluation step limit exceeded" });
+		});
+
+		test("should bound context strings, arrays, buffers, and node count", () => {
+			assert.throws(() => new Evaluator({ text: "x".repeat(100001) }), /maximum length/);
+			assert.throws(() => new Evaluator({ values: new Array(10001) }), /maximum length/);
+			assert.throws(() => new Evaluator({ bytes: new Uint8Array(1000001) }), /maximum data size/);
+			assert.throws(() => new Evaluator(Object.fromEntries(Array.from({ length: 100001 }, (_, index) => [`k${index}`, index]))), /maximum data node count/);
+		});
+
+		test("should reject context accessors without invoking them", () => {
+			let getterCalls = 0;
+			const context = Object.defineProperty({}, "value", {
+				enumerable: true,
+				get() {
+					getterCalls++;
+					return 1;
+				},
+			});
+
+			assert.throws(() => new Evaluator(context), { message: "Evaluation context cannot contain accessor properties" });
+			assert.equal(getterCalls, 0);
+		});
+
+		test("should reject resource-heavy constructors and built-ins before allocation", () => {
+			assert.throws(() => evaluator.evaluate("new Array(10001)"), /maximum allowed length/);
+			assert.throws(() => evaluator.evaluate("new ArrayBuffer(1000001)"), /maximum allowed size/);
+			assert.throws(() => evaluator.evaluate("new Uint8Array(1000001)"), /maximum allowed size/);
+			assert.throws(() => evaluator.evaluate("Array.from({ length: 10001 })"), /maximum allowed length/);
+			assert.throws(() => evaluator.evaluate('"x".repeat(100001)'), /maximum allowed length/);
+			assert.throws(() => evaluator.evaluate('"x".padEnd(100001)'), /maximum allowed length/);
+			assert.throws(() => evaluator.evaluate('"a".concat("x".repeat(100000), "y")'), /maximum allowed length/);
+			assert.throws(() => evaluator.evaluate('"aa".replaceAll("a", "x".repeat(100000))'), /maximum allowed length/);
+			assert.throws(() => evaluator.evaluate("2n ** 257n"), /BigInt exponent/);
+			assert.throws(() => evaluator.evaluate("1n << 65537n"), /BigInt result/);
+		});
+
+		test("should share an allocation budget across native callback iterations", () => {
+			assert.throws(
+				() => evaluator.evaluate("Array.from({ length: 20 }, (_, index) => index).map(() => new Array(10000))"),
+				{ message: "Evaluation allocation budget exceeded" }
+			);
+		});
+	});
+
 });
 
 describe("Error Handling", () => {

@@ -216,6 +216,21 @@ describe("evalTemplate", () => {
 			assert.throws(() => evalTemplate(TEMPLATE, { obj: null }), /Cannot read property/);
 		});
 	});
+
+	describe("Resource Limits", () => {
+		test("should bound template length, expression count, and output length", () => {
+			assert.throws(() => evalTemplate("abcd", {}, { maxTemplateLength: 3 }), /maximum length/);
+			assert.throws(() => evalTemplate("{{1}}{{2}}", {}, { maxExpressions: 1 }), /maximum expression count/);
+			assert.throws(() => evalTemplate("{{ 'long' }}", {}, { maxOutputLength: 3 }), /maximum length/);
+			assert.throws(() => evalTemplate("{{ 1 + 2 }}", {}, { maxEvaluationSteps: 2 }), /Evaluation step limit/);
+		});
+
+		test("should reject invalid and excessive template limits", () => {
+			for (const option of [{ maxExpressions: 0 }, { maxOutputLength: Infinity }, { maxTemplateLength: 1000001 }, { maxTokens: 10001 }]) {
+				assert.throws(() => evalTemplate("text", {}, option), RangeError);
+			}
+		});
+	});
 });
 
 describe("evalExpression", () => {

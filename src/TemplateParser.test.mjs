@@ -147,4 +147,34 @@ describe("TemplateParser", () => {
 			);
 		});
 	});
+
+	describe("Resource Limits", () => {
+		test("should reject templates over the configured length", () => {
+			const parser = new TemplateParser({ maxTemplateLength: 3 });
+			assert.throws(() => parser.parse("abcd"), /maximum length/);
+		});
+
+		test("should reject templates over the configured token count", () => {
+			const parser = new TemplateParser({ maxTokens: 2 });
+			assert.throws(() => parser.parse("a{{x}}b"), /maximum token count/);
+		});
+
+		test("should reject invalid parser limits and delimiters", () => {
+			assert.throws(() => new TemplateParser({ maxTokens: Infinity }), RangeError);
+			assert.throws(() => new TemplateParser({ expressionStart: "" }), TypeError);
+			assert.throws(() => new TemplateParser({ expressionEnd: "x".repeat(129) }), TypeError);
+		});
+
+		test("should not write parser warnings to the host console", () => {
+			const originalWarn = console.warn;
+			let warningCalls = 0;
+			console.warn = () => warningCalls++;
+			try {
+				assert.equal(new TemplateParser().parse("{{unclosed")[0].value, "{{unclosed");
+			} finally {
+				console.warn = originalWarn;
+			}
+			assert.equal(warningCalls, 0);
+		});
+	});
 });

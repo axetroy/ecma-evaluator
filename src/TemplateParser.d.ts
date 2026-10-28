@@ -12,6 +12,18 @@ export interface TemplateParserOptions {
 	preserveWhitespace?: boolean;
 	expressionStart?: string;
 	expressionEnd?: string;
+	/** Maximum template length in UTF-16 code units. @default 100000 */
+	maxTemplateLength?: number;
+	/** Maximum parsed token count. @default 1000 */
+	maxTokens?: number;
+	/** Maximum evaluated expressions in evalTemplate. @default 100 */
+	maxExpressions?: number;
+	/** Maximum expression length in evalTemplate. @default 10000 */
+	maxExpressionLength?: number;
+	/** Maximum AST node visits per expression in evalTemplate. @default 10000 */
+	maxEvaluationSteps?: number;
+	/** Maximum output length in UTF-16 code units. @default 100000 */
+	maxOutputLength?: number;
 }
 
 export class TemplateParser {

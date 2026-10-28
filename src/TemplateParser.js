@@ -3,6 +3,21 @@
  * 能够正确处理表达式中包含字符串、转义字符和结束标记的情况
  * @class SimpleStateTemplateParser
  */
+const DEFAULT_MAX_TEMPLATE_LENGTH = 100000;
+const MAX_CONFIGURABLE_TEMPLATE_LENGTH = 1000000;
+const DEFAULT_MAX_TOKENS = 1000;
+const MAX_CONFIGURABLE_TOKENS = 10000;
+
+function validateLimit(value, name, defaultValue, maximum) {
+	if (value === undefined) {
+		return defaultValue;
+	}
+	if (!Number.isSafeInteger(value) || value < 1 || value > maximum) {
+		throw new RangeError(`${name} must be an integer between 1 and ${maximum}`);
+	}
+	return value;
+}
+
 class TemplateParser {
 	/**
 	 * 创建解析器实例
@@ -12,6 +27,15 @@ class TemplateParser {
 	 * @param {boolean} [options.preserveWhitespace=true] - 是否保留表达式周围的空白字符
 	 */
 	constructor(options = {}) {
+		options ??= {};
+		this.maxTemplateLength = validateLimit(options.maxTemplateLength, "maxTemplateLength", DEFAULT_MAX_TEMPLATE_LENGTH, MAX_CONFIGURABLE_TEMPLATE_LENGTH);
+		this.maxTokens = validateLimit(options.maxTokens, "maxTokens", DEFAULT_MAX_TOKENS, MAX_CONFIGURABLE_TOKENS);
+		if (options.expressionStart !== undefined && (typeof options.expressionStart !== "string" || options.expressionStart.length === 0 || options.expressionStart.length > 128)) {
+			throw new TypeError("expressionStart must be a non-empty string of at most 128 characters");
+		}
+		if (options.expressionEnd !== undefined && (typeof options.expressionEnd !== "string" || options.expressionEnd.length === 0 || options.expressionEnd.length > 128)) {
+			throw new TypeError("expressionEnd must be a non-empty string of at most 128 characters");
+		}
 		// 表达式标记配置
 		this.exprStart = options.expressionStart || "{{";
 		this.exprEnd = options.expressionEnd || "}}";
@@ -34,8 +58,17 @@ class TemplateParser {
 		if (typeof template !== "string") {
 			throw new TypeError("模板必须是字符串");
 		}
+		if (template.length > this.maxTemplateLength) {
+			throw new RangeError(`Template exceeds the maximum length of ${this.maxTemplateLength} characters`);
+		}
 
 		const tokens = []; // 存储解析结果的 token 数组
+		const pushToken = (token) => {
+			if (tokens.length >= this.maxTokens) {
+				throw new RangeError(`Template exceeds the maximum token count of ${this.maxTokens}`);
+			}
+			tokens.push(token);
+		};
 		const length = template.length;
 
 		// 状态机变量
@@ -57,7 +90,7 @@ class TemplateParser {
 					if (this._isMatch(pos, template, this.exprStart)) {
 						// 将缓冲区中的文本保存为 token
 						if (buffer.length > 0) {
-							tokens.push({ type: "text", value: buffer, start: pos - buffer.length, end: pos });
+							pushToken({ type: "text", value: buffer, start: pos - buffer.length, end: pos });
 							buffer = "";
 						}
 						// 切换到表达式状态
@@ -92,7 +125,7 @@ class TemplateParser {
 						// 找到表达式结束标记，且不在字符串中
 						const exprValue = this.preserveWhitespace ? buffer : buffer.trim();
 						if (exprValue.length > 0) {
-							tokens.push({
+							pushToken({
 								type: "expression",
 								value: exprValue,
 								start: exprStartPos,
@@ -171,18 +204,11 @@ class TemplateParser {
 		if (buffer.length > 0) {
 			if (state === "TEXT") {
 				// 剩余的文本内容
-				tokens.push({ type: "text", value: buffer, start: pos - buffer.length, end: pos });
+				pushToken({ type: "text", value: buffer, start: pos - buffer.length, end: pos });
 			} else {
 				// 未完成的表达式，将其作为普通文本处理
-				// 这里可以根据需要选择不同的错误处理策略：
-				// 1. 抛出错误
-				// 2. 忽略未完成的表达式
-				// 3. 将其作为文本处理（当前实现）
 				const incompleteExpr = this.exprStart + buffer;
-				tokens.push({ type: "text", value: incompleteExpr, start: exprStartPos, end: pos });
-
-				// 可选：输出警告
-				console.warn(`警告：在位置 ${exprStartPos} 开始的表达式未正确结束`);
+				pushToken({ type: "text", value: incompleteExpr, start: exprStartPos, end: pos });
 			}
 		}
 

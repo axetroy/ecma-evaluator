@@ -2,10 +2,15 @@ import { Node } from "acorn";
 
 export interface EvaluatorOptions {
 	/**
-	 * Maximum allowed length (in characters) of a single expression.
+	 * Maximum expression length in UTF-16 code units (hard maximum: 100000).
 	 * @default 10000
 	 */
 	maxInputLength?: number;
+	/**
+	 * Maximum AST node visits for a single evaluation (hard maximum: 100000).
+	 * @default 10000
+	 */
+	maxEvaluationSteps?: number;
 }
 
 export declare class Evaluator {
