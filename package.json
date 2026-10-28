@@ -1,6 +1,6 @@
 {
     "name": "ecma-evaluator",
-    "version": "2.0.9",
+    "version": "2.0.10",
     "packageManager": "pnpm@12.4.1",
     "private": false,
     "description": "A tiny and fast JavaScript expression evaluator.",
