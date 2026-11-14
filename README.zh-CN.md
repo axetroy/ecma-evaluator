@@ -32,8 +32,8 @@ evalTemplate("你好，{{ name }}！", { name: "世界" }); // "你好，世界�
 
 ## 文档
 
-- [快速开始](/zh-CN/guide/getting-started)
-- [API、支持的特性、安全性和使用说明](/zh-CN/guide/reference)
+- [快速开始](https://axetroy.github.io/ecma-evaluator/zh-CN/guide/getting-started)
+- [API、支持的特性、安全性和使用说明](https://axetroy.github.io/ecma-evaluator/zh-CN/guide/reference)
 - [在线体验](https://axetroy.github.io/ecma-evaluator/zh-CN/#playground)
 
 也可以访问[文档网站](https://axetroy.github.io/ecma-evaluator/zh-CN/)。
