@@ -129,7 +129,76 @@ function countLiteralMatches(value, search, all) {
 	return count;
 }
 
+/**
+ * Bounded, module-level cache of parsed ASTs. Expressions are frequently
+ * evaluated many times (templates, repeated rules), and acorn parsing dominates
+ * the runtime of a short expression - re-parsing on every call is the single
+ * biggest cost in the hot path. The AST is treated as immutable after parsing
+ * (no handler mutates a node), so a cached tree can be shared safely across
+ * evaluations and instances.
+ *
+ * The cache is bounded by both entry count and total source length so a stream
+ * of distinct large inputs cannot grow it without limit. Eviction is FIFO
+ * (oldest-inserted first): a hit must not touch the Map, because a read-modify
+ * "refresh" on every hit costs ~60ns versus ~8ns for a plain `get`.
+ */
+const PARSE_CACHE = new Map();
+const MAX_PARSE_CACHE_ENTRIES = 1000;
+const MAX_PARSE_CACHE_CHARS = 200000;
+let parseCacheChars = 0;
+
+function parseExpression(expression) {
+	const cached = PARSE_CACHE.get(expression);
+	if (cached !== undefined) {
+		return cached;
+	}
+
+	let ast;
+	try {
+		ast = acorn.parse(expression, { ecmaVersion: "latest" });
+	} catch (error) {
+		// acorn parses recursively; a deeply nested expression can exhaust the
+		// host call stack before evaluation ever starts. Surface it as a
+		// normal SyntaxError instead of leaking a stack-overflow RangeError.
+		if (error instanceof RangeError && /call stack/i.test(error.message)) {
+			throw new SyntaxError("Expression nesting is too deep to parse");
+		}
+		throw error;
+	}
+
+	if (expression.length <= MAX_PARSE_CACHE_CHARS) {
+		while (PARSE_CACHE.size >= MAX_PARSE_CACHE_ENTRIES || parseCacheChars + expression.length > MAX_PARSE_CACHE_CHARS) {
+			const oldestKey = PARSE_CACHE.keys().next().value;
+			if (oldestKey === undefined) break;
+			parseCacheChars -= oldestKey.length;
+			PARSE_CACHE.delete(oldestKey);
+		}
+		PARSE_CACHE.set(expression, ast);
+		parseCacheChars += expression.length;
+	}
+
+	return ast;
+}
+
 function assertBoundedData(value, label) {
+	// Fast path: a primitive has no properties, cycles, or references to walk,
+	// so the traversal (and its `pending` array + `WeakSet` allocations) is pure
+	// overhead. This is the common case for arrow-function return values such as
+	// `arr.map(v => v * 2)`, where the callback returns a primitive per element.
+	// The accounting mirrors the slow path exactly (a string costs length + 8 and
+	// is length-bounded; every other primitive costs 8), so the budget behaves
+	// identically whether or not the fast path is taken.
+	const valueType = typeof value;
+	if (valueType === "string") {
+		if (value.length > MAX_STRING_LENGTH) {
+			throw new RangeError(`${label} contains a string that exceeds the maximum length`);
+		}
+		return { dataSize: value.length + 8, dataNodes: 1 };
+	}
+	if (value === null || valueType === "undefined" || valueType === "number" || valueType === "boolean" || valueType === "bigint") {
+		return { dataSize: 8, dataNodes: 1 };
+	}
+
 	const pending = [value];
 	const seen = new WeakSet();
 	let dataSize = 0;
@@ -272,6 +341,16 @@ function createGlobalScope() {
 // every builtin (measurably ~5x slower for short-lived instances).
 const GLOBAL_SCOPE = createGlobalScope();
 
+/**
+ * Shared default evaluation context. It is frozen and has a null prototype, and
+ * the evaluator never writes to a context scope (arrow-function parameter scopes
+ * are separate objects), so every instance can safely share this single object.
+ * Without it, the default `variables = Object.create(null)` parameter would make
+ * each construction `structuredClone` a fresh empty object - the dominant cost of
+ * the one-shot `evalExpression` / `Evaluator.evaluate` path.
+ */
+const EMPTY_CONTEXT = Object.freeze(Object.create(null));
+
 const getBlockedMethods = (() => {
 	/**
 	 * @type {Map<Function, string>}
@@ -323,12 +402,18 @@ export class Evaluator {
 	 * @param {number} [options.maxInputLength=10000] - Maximum expression length (hard maximum: 100000)
 	 * @param {number} [options.maxEvaluationSteps=10000] - Maximum AST node visits per evaluation (hard maximum: 100000)
 	 */
-	constructor(variables = Object.create(null), options) {
+	constructor(variables = EMPTY_CONTEXT, options) {
 		this.maxInputLength = validateLimit(options?.maxInputLength, "maxInputLength", DEFAULT_MAX_INPUT_LENGTH, MAX_CONFIGURABLE_INPUT_LENGTH);
 		this.maxEvaluationSteps = validateLimit(options?.maxEvaluationSteps, "maxEvaluationSteps", DEFAULT_MAX_EVALUATION_STEPS, MAX_CONFIGURABLE_EVALUATION_STEPS);
 		this.maxDepth = validateLimit(options?.maxDepth, "maxDepth", DEFAULT_MAX_DEPTH, MAX_CONFIGURABLE_DEPTH);
-		assertBoundedData(variables, "Evaluation context");
-		const clonedVariables = structuredClone(variables);
+		// The shared default context is known to be empty and immutable, so it needs
+		// neither the bounded-data walk nor a clone. Caller-supplied contexts are
+		// validated and cloned so the sandbox never holds a live reference to host state.
+		let clonedVariables = EMPTY_CONTEXT;
+		if (variables !== EMPTY_CONTEXT) {
+			assertBoundedData(variables, "Evaluation context");
+			clonedVariables = structuredClone(variables);
+		}
 		this.scopes = [clonedVariables, GLOBAL_SCOPE].filter((scope) => scope !== null && scope !== undefined);
 		this.source = undefined;
 		this.remainingEvaluationSteps = 0;
@@ -371,18 +456,7 @@ export class Evaluator {
 		this.remainingDataNodes = MAX_DATA_NODES;
 		this.evaluationDepth = 0;
 
-		let ast;
-		try {
-			ast = acorn.parse(expression, { ecmaVersion: "latest" });
-		} catch (error) {
-			// acorn parses recursively; a deeply nested expression can exhaust the
-			// host call stack before evaluation ever starts. Surface it as a
-			// normal SyntaxError instead of leaking a stack-overflow RangeError.
-			if (error instanceof RangeError && /call stack/i.test(error.message)) {
-				throw new SyntaxError("Expression nesting is too deep to parse");
-			}
-			throw error;
-		}
+		const ast = parseExpression(expression);
 
 		// Start recursive evaluation from the root node
 		try {
@@ -421,6 +495,16 @@ export class Evaluator {
 		// allow one to escape evaluate() as a value.
 		if (result instanceof Promise) {
 			throw new Error(renderErrorMessage(ERROR_MESSAGES.IS_NOT_ALLOWED, ["Returning promises from expressions"]));
+		}
+
+		// Fast path: a primitive needs no clone. structuredClone costs ~300ns
+		// even for a number, which dominates short expressions, while a primitive
+		// is already an immutable value with no sandbox reference to leak.
+		// Symbols are deliberately excluded so they still hit the clone gate
+		// below and raise the non-cloneable error.
+		const resultType = typeof result;
+		if (result === null || resultType === "string" || resultType === "number" || resultType === "boolean" || resultType === "undefined" || resultType === "bigint") {
+			return result;
 		}
 
 		// Final gate: the return value must be cloneable, pure data. A
@@ -464,101 +548,97 @@ export class Evaluator {
 			throw new RangeError("Maximum evaluation depth exceeded");
 		}
 		try {
-			return this.visitNode(node);
+			switch (node.type) {
+				case "ExpressionStatement": {
+					return this.visit(node.expression);
+				}
+				case "BinaryExpression": {
+					return this.handleBinaryExpression(node);
+				}
+				case "LogicalExpression": {
+					return this.handleLogicalExpression(node);
+				}
+				case "UnaryExpression": {
+					return this.handleUnaryExpression(node);
+				}
+				case "Identifier": {
+					return this.handleIdentifier(node);
+				}
+				case "Literal": {
+					return node.value;
+				}
+				case "MemberExpression": {
+					return this.handleMemberExpression(node);
+				}
+				case "ArrayExpression": {
+					return this.handleArrayExpression(node);
+				}
+				case "SpreadElement": {
+					return this.handleSpreadElement(node);
+				}
+				case "ObjectExpression": {
+					return this.handleObjectExpression(node);
+				}
+				case "FunctionExpression": {
+					throw new SyntaxError(renderErrorMessage(ERROR_MESSAGES.IS_NOT_ALLOWED, ["Function expression"]));
+				}
+				case "ArrowFunctionExpression": {
+					return this.handleArrowFunctionExpression(node);
+				}
+				case "CallExpression": {
+					return this.handleCallExpression(node);
+				}
+				case "ConditionalExpression": {
+					return this.visit(node.test) ? this.visit(node.consequent) : this.visit(node.alternate);
+				}
+				case "NewExpression": {
+					if (node.callee.type !== "Identifier") {
+						throw new Error(`Unsupported callee type '${node.callee.type}' in new expression`);
+					}
+
+					if (node.callee.name === "Function") {
+						throw new Error(renderErrorMessage(ERROR_MESSAGES.IS_NOT_ALLOWED, ["new Function() constructor"]));
+					}
+
+					// Promise is fully removed from the sandbox; give a clear error
+					// instead of a generic "not defined". Its executor runs
+					// synchronously, but a throwing executor would turn into a
+					// rejected Promise that escapes evaluate() and crashes the host.
+					if (node.callee.name === "Promise") {
+						throw new Error(renderErrorMessage(ERROR_MESSAGES.IS_NOT_ALLOWED, ["Promise constructor"]));
+					}
+					const Constructor = this.visit(node.callee);
+
+					// 仅在存在参数时构建数组
+					const args = node.arguments.length ? node.arguments.map((arg) => this.visit(arg)) : [];
+					this.assertBoundedConstruction(Constructor, args);
+
+					return new Constructor(...args);
+				}
+				case "ChainExpression": {
+					return this.visit(node.expression);
+				}
+				case "TemplateLiteral": {
+					return this.handleTemplateLiteral(node);
+				}
+				case "ThisExpression": {
+					throw new SyntaxError(renderErrorMessage(ERROR_MESSAGES.IS_NOT_ALLOWED, ["'this' expression"]));
+				}
+				case "WithStatement": {
+					throw new SyntaxError(renderErrorMessage(ERROR_MESSAGES.IS_NOT_ALLOWED, ["'with' statement"]));
+				}
+				default: {
+					let content = this.source.slice(node.start, node.end);
+
+					if (content.length > 20) {
+						content = content.slice(0, 17) + "...";
+					}
+
+					throw new SyntaxError(`'${content}'` + " " + renderErrorMessage(ERROR_MESSAGES.IS_INVALID_SYNTAX, [content]));
+				}
+			}
 		} finally {
 			this.evaluationDepth--;
-		}
-	}
-
-	visitNode(node) {
-		switch (node.type) {
-			case "ExpressionStatement": {
-				return this.visit(node.expression);
-			}
-			case "BinaryExpression": {
-				return this.handleBinaryExpression(node);
-			}
-			case "LogicalExpression": {
-				return this.handleLogicalExpression(node);
-			}
-			case "UnaryExpression": {
-				return this.handleUnaryExpression(node);
-			}
-			case "Identifier": {
-				return this.handleIdentifier(node);
-			}
-			case "Literal": {
-				return node.value;
-			}
-			case "MemberExpression": {
-				return this.handleMemberExpression(node);
-			}
-			case "ArrayExpression": {
-				return this.handleArrayExpression(node);
-			}
-			case "SpreadElement": {
-				return this.handleSpreadElement(node);
-			}
-			case "ObjectExpression": {
-				return this.handleObjectExpression(node);
-			}
-			case "FunctionExpression": {
-				throw new SyntaxError(renderErrorMessage(ERROR_MESSAGES.IS_NOT_ALLOWED, ["Function expression"]));
-			}
-			case "ArrowFunctionExpression": {
-				return this.handleArrowFunctionExpression(node);
-			}
-			case "CallExpression": {
-				return this.handleCallExpression(node);
-			}
-			case "ConditionalExpression": {
-				return this.visit(node.test) ? this.visit(node.consequent) : this.visit(node.alternate);
-			}
-			case "NewExpression": {
-				if (node.callee.type !== "Identifier") {
-					throw new Error(`Unsupported callee type '${node.callee.type}' in new expression`);
-				}
-
-				if (node.callee.name === "Function") {
-					throw new Error(renderErrorMessage(ERROR_MESSAGES.IS_NOT_ALLOWED, ["new Function() constructor"]));
-				}
-
-				// Promise is fully removed from the sandbox; give a clear error
-				// instead of a generic "not defined". Its executor runs
-				// synchronously, but a throwing executor would turn into a
-				// rejected Promise that escapes evaluate() and crashes the host.
-				if (node.callee.name === "Promise") {
-					throw new Error(renderErrorMessage(ERROR_MESSAGES.IS_NOT_ALLOWED, ["Promise constructor"]));
-				}
-				const Constructor = this.visit(node.callee);
-
-				// 仅在存在参数时构建数组
-				const args = node.arguments.length ? node.arguments.map((arg) => this.visit(arg)) : [];
-				this.assertBoundedConstruction(Constructor, args);
-
-				return new Constructor(...args);
-			}
-			case "ChainExpression": {
-				return this.visit(node.expression);
-			}
-			case "TemplateLiteral": {
-				return this.handleTemplateLiteral(node);
-			}
-			case "ThisExpression": {
-				throw new SyntaxError(renderErrorMessage(ERROR_MESSAGES.IS_NOT_ALLOWED, ["'this' expression"]));
-			}
-			case "WithStatement": {
-				throw new SyntaxError(renderErrorMessage(ERROR_MESSAGES.IS_NOT_ALLOWED, ["'with' statement"]));
-			}
-			default: {
-				let content = this.source.slice(node.start, node.end);
-
-				if (content.length > 20) {
-					content = content.slice(0, 17) + "...";
-				}
-
-				throw new SyntaxError(`'${content}'` + " " + renderErrorMessage(ERROR_MESSAGES.IS_INVALID_SYNTAX, [content]));
-			}
 		}
 	}
 
@@ -925,9 +1005,9 @@ export class Evaluator {
 			throw new Error(renderErrorMessage(ERROR_MESSAGES.IS_NOT_ALLOWED, ["Error.prepareStackTrace"]));
 		}
 
-		if (getBlockedMethods().has(func)) {
-			const path = getBlockedMethods().get(func);
-			throw new Error(renderErrorMessage(ERROR_MESSAGES.IS_NOT_ALLOWED, [path]));
+		const blockedPath = getBlockedMethods().get(func);
+		if (blockedPath !== undefined) {
+			throw new Error(renderErrorMessage(ERROR_MESSAGES.IS_NOT_ALLOWED, [blockedPath]));
 		}
 		// Typed-array mutators live on `%TypedArray%.prototype`, which the
 		// own-property walk in `getBlockedMethods` never reaches, so resolve

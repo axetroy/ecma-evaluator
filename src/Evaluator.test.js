@@ -1462,6 +1462,62 @@ describe("Security and Restrictions", () => {
 		});
 	});
 
+	describe("Performance optimizations", () => {
+		test("should cache parsed ASTs and reuse them across evaluations and instances", () => {
+			// The parse cache is keyed by the expression source. A shared AST must
+			// behave identically no matter which instance evaluates it: the AST is
+			// never mutated, so a second instance sees its own scope, not the first's.
+			const first = new Evaluator({ a: 1, b: 2 });
+			const second = new Evaluator({ a: 10, b: 20 });
+
+			assert.equal(first.evaluate("a + b"), 3);
+			assert.equal(second.evaluate("a + b"), 30);
+			assert.equal(first.evaluate("a + b"), 3);
+		});
+
+		test("should not cache invalid expressions, so errors are still reported", () => {
+			const local = new Evaluator({});
+			assert.throws(() => local.evaluate("1 +"), SyntaxError);
+			assert.throws(() => local.evaluate("1 +"), SyntaxError);
+		});
+
+		test("should stay correct under many distinct expressions (cache eviction)", () => {
+			// Exercise the bounded cache with more distinct expressions than its
+			// entry limit so eviction runs; results must remain correct throughout.
+			const local = new Evaluator({});
+			for (let index = 0; index < 3000; index++) {
+				assert.equal(local.evaluate(`${index} + 1`), index + 1);
+			}
+			// Re-evaluating an early expression after eviction must still work.
+			assert.equal(local.evaluate("0 + 1"), 1);
+		});
+
+		test("should return primitives without cloning but still reject symbol results", () => {
+			const local = new Evaluator({});
+			assert.equal(local.evaluate("42"), 42);
+			assert.equal(local.evaluate("'text'"), "text");
+			assert.equal(local.evaluate("42n"), 42n);
+			assert.equal(local.evaluate("null"), null);
+			assert.equal(local.evaluate("undefined"), undefined);
+			assert.equal(local.evaluate("1 > 0"), true);
+			// A symbol is not cloneable and must still be rejected, not returned.
+			assert.throws(() => local.evaluate("Symbol()"), { message: "Returning non-cloneable values from expressions is not allowed" });
+		});
+
+		test("should still return deep copies for object and array results", () => {
+			const local = new Evaluator({ obj: { a: 1 } });
+			const returned = local.evaluate("({ a: 1, b: obj })");
+			returned.b.a = 999;
+			assert.equal(local.evaluate("obj.a"), 1, "mutating the returned copy must not affect the sandbox");
+		});
+
+		test("should bound primitive and string results the same way as before", () => {
+			const local = new Evaluator({});
+			// A huge string result is still rejected by the string-length bound.
+			assert.throws(() => local.evaluate('"x".repeat(100001)'), /maximum allowed length/);
+		});
+	});
+
 });
 
 describe("Error Handling", () => {
