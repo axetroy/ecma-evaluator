@@ -32,8 +32,8 @@ evalTemplate("Hello {{ name }}!", { name: "World" }); // "Hello World!"
 
 ## Documentation
 
-- [Getting started](/guide/getting-started)
-- [API, supported features, security, and usage reference](/guide/reference)
+- [Getting started](https://axetroy.github.io/ecma-evaluator/guide/getting-started)
+- [API, supported features, security, and usage reference](https://axetroy.github.io/ecma-evaluator/guide/reference)
 - [Online playground](https://axetroy.github.io/ecma-evaluator/#playground)
 
 See the [documentation site](https://axetroy.github.io/ecma-evaluator/).
