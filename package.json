@@ -29,6 +29,7 @@
     },
     "scripts": {
         "test": "node --test \"**/*.test.{js,mjs}\"",
+        "bench": "node benchmark/index.mjs",
         "test:update-snapshots": "node --test-update-snapshots --test \"**/*.test.{js,mjs}\"",
         "build": "knip && rslib build",
         "docs:dev": "vitepress dev docs",
