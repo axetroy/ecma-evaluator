@@ -1039,6 +1039,16 @@ describe("Security and Restrictions", () => {
 			assert.equal(evaluator.evaluate("Math.max(1, 2, 3)"), 3);
 		});
 
+		test("should treat missing properties on null-prototype objects as undefined", () => {
+			// A null-prototype object has `__proto__ === undefined`, so the
+			// prototype guard must not fire for ordinary missing properties.
+			assert.equal(evaluator.evaluate("globalThis.missingProperty"), undefined);
+			assert.equal(evaluator.evaluate("typeof globalThis.missingProperty"), "undefined");
+			const nullProto = new Evaluator(Object.assign(Object.create(null), { present: 1 }));
+			assert.equal(nullProto.evaluate("present"), 1);
+			assert.equal(nullProto.evaluate("globalThis.absent"), undefined);
+		});
+
 		test("should block accessing prototype properties", () => {
 			assert.throws(() => evaluator.evaluate("__proto__"), { message: "__proto__ is not defined" });
 			assert.throws(() => evaluator.evaluate("({}).__proto__"), { message: "Accessing prototype properties is not allowed" });
@@ -1202,15 +1212,13 @@ describe("Security and Restrictions", () => {
 		});
 
 		test("should block host-only objects from escaping as return values", () => {
-			// WeakRef / FinalizationRegistry wrap host GC hooks and survive in
-			// the evaluator's scope only as long as the sandbox holds them.
-			// They are not cloneable, so they cannot escape evaluate().
+			// WeakRef / FinalizationRegistry wrap host GC hooks. They are not
+			// exposed at all, so the identifiers do not resolve.
 			const evaluator = new Evaluator({});
-			const message = "Returning non-cloneable values from expressions is not allowed";
 
-			assert.throws(() => evaluator.evaluate("new WeakRef({})"), { message });
-			assert.throws(() => evaluator.evaluate("new WeakRef({ f: () => 1 })"), { message });
-			assert.throws(() => evaluator.evaluate("new FinalizationRegistry(() => {})"), { message });
+			assert.throws(() => evaluator.evaluate("new WeakRef({})"), { message: "WeakRef is not defined" });
+			assert.throws(() => evaluator.evaluate("new WeakRef({ f: () => 1 })"), { message: "WeakRef is not defined" });
+			assert.throws(() => evaluator.evaluate("new FinalizationRegistry(() => {})"), { message: "FinalizationRegistry is not defined" });
 		});
 
 		test("should block SharedArrayBuffer as a global builtin", () => {
@@ -1295,8 +1303,10 @@ describe("Security and Restrictions", () => {
 
 			assert.equal(evaluator.evaluate("1 + 2"), 3);
 
-			// 4001 characters (< 10000), evaluates to 1001
-			assert.equal(evaluator.evaluate("1 + ".repeat(1000) + "1"), 1001);
+			// 2001 characters (< 10000), evaluates to 501. Kept well below the
+			// default depth limit (1000): a longer chain would be a deep
+			// left-nested tree and trip the depth guard instead.
+			assert.equal(evaluator.evaluate("1 + ".repeat(500) + "1"), 501);
 		});
 
 		test("should respect a custom maxInputLength option", () => {
@@ -1358,6 +1368,20 @@ describe("Security and Restrictions", () => {
 			}
 		});
 
+		test("should reject deeply nested expressions with a clear error", () => {
+			const evaluator = new Evaluator({});
+			assert.throws(() => evaluator.evaluate("[".repeat(1000) + "1" + "]".repeat(1000)), /(nesting is too deep|depth exceeded)/);
+			assert.throws(() => evaluator.evaluate("!".repeat(1200) + "1"), /(nesting is too deep|depth exceeded)/);
+		});
+
+		test("should honor a custom maxDepth option", () => {
+			const evaluator = new Evaluator({}, { maxDepth: 10 });
+			assert.equal(evaluator.evaluate("1 + 2"), 3);
+			assert.throws(() => evaluator.evaluate("[[[[[[[[[[[[1]]]]]]]]]]]]"), { message: "Maximum evaluation depth exceeded" });
+			assert.throws(() => new Evaluator({}, { maxDepth: 0 }), RangeError);
+			assert.throws(() => new Evaluator({}, { maxDepth: 2001 }), RangeError);
+		});
+
 		test("should bound AST visits per evaluation", () => {
 			const evaluator = new Evaluator({}, { maxEvaluationSteps: 4 });
 			assert.equal(evaluator.evaluate("1 + 2"), 3);
@@ -1396,6 +1420,38 @@ describe("Security and Restrictions", () => {
 			assert.throws(() => evaluator.evaluate('"aa".replaceAll("a", "x".repeat(100000))'), /maximum allowed length/);
 			assert.throws(() => evaluator.evaluate("2n ** 257n"), /BigInt exponent/);
 			assert.throws(() => evaluator.evaluate("1n << 65537n"), /BigInt result/);
+		});
+
+		test("should block typed-array mutators inherited from %TypedArray%.prototype", () => {
+			// These live on the shared prototype, so an own-property walk never
+			// finds them; the evaluator resolves them explicitly.
+			for (const code of [
+				"new Uint8Array(3).fill(1)",
+				"new Int32Array(3).reverse()",
+				"new Float64Array(3).sort()",
+				"new Uint8Array(3).set([1, 2, 3])",
+				"new Uint8Array(3).copyWithin(0, 1)",
+			]) {
+				assert.throws(() => evaluator.evaluate(code), /TypedArray\.prototype\.\w+ is not allowed/);
+			}
+		});
+
+		test("should bound Float16Array allocations like every other typed array", () => {
+			if (typeof Float16Array !== "function") return;
+			assert.throws(() => evaluator.evaluate("new Float16Array(1000001)"), /maximum allowed size/);
+			assert.equal(evaluator.evaluate("new Float16Array(3).length"), 3);
+		});
+
+		test("should block Object.create to prevent arbitrary prototypes", () => {
+			assert.throws(() => evaluator.evaluate("Object.create(Array.prototype)"), { message: "Object.create is not allowed" });
+			assert.throws(() => evaluator.evaluate("Object.create(null)"), { message: "Object.create is not allowed" });
+		});
+
+		test("should bound RegExp construction", () => {
+			assert.throws(() => evaluator.evaluate('new RegExp("a".repeat(1001))'), /RegExp source exceeds/);
+			assert.throws(() => evaluator.evaluate('RegExp("a".repeat(1001))'), /RegExp source exceeds/);
+			assert.throws(() => evaluator.evaluate('new RegExp("a", "gggggggggggggggggggggggggggggggggg")'), /RegExp flags exceed/);
+			assert.equal(evaluator.evaluate('new RegExp("a", "g").flags'), "g");
 		});
 
 		test("should share an allocation budget across native callback iterations", () => {
@@ -1456,6 +1512,14 @@ describe("getNodeString", () => {
 	});
 
 	describe("ArrayExpression", () => {
+		test("should render array holes as empty slots", () => {
+			const node = {
+				type: "ArrayExpression",
+				elements: [{ type: "Literal", value: 1, raw: "1" }, null, { type: "Literal", value: 2, raw: "2" }],
+			};
+			assert.equal(getNodeString(node), "[1,,2]");
+		});
+
 		test("should return correct string for ArrayExpression", () => {
 			const node = {
 				type: "ArrayExpression",

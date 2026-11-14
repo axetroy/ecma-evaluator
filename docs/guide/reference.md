@@ -85,12 +85,13 @@ Evaluator.evaluate("1 + 1"); // 2
 -   `new Evaluator(variables?, options?)`: Validates then clones `variables` (default: an empty object). The context must be supported by `structuredClone` and cannot contain enumerable accessor properties.
 -   `options.maxInputLength` (`number`, default `10000`): Maximum expression length in UTF-16 code units (hard maximum `100000`).
 -   `options.maxEvaluationSteps` (`number`, default `10000`): Maximum AST node visits per evaluation (hard maximum `100000`).
+-   `options.maxDepth` (`number`, default `1000`): Maximum interpreter recursion depth (hard maximum `2000`). Bounds nested expressions so a deeply nested input cannot exhaust the host call stack; exceeding it throws `RangeError: Maximum evaluation depth exceeded`. Inputs too deep for the parser throw `SyntaxError: Expression nesting is too deep to parse`.
 -   `evaluator.evaluate(expression)`: Evaluates with the instance context and options.
 -   `Evaluator.evaluate(expression, variables?)`: Static convenience method using default options.
 
 Both methods return the cloned result of the last expression and throw the same classes of errors as `evalExpression`. The static method does not accept an options argument.
 
-Contexts and results are also limited to 100,000 code units per string, an estimated 1,000,000 aggregate data bytes, 10,000 array/collection entries, and 100,000 data nodes. Array buffers and typed arrays are limited to 1,000,000 bytes. Regular expressions are supported without an execution-time limit; a pathological expression can block the main thread.
+Contexts and results are also limited to 100,000 code units per string, an estimated 1,000,000 aggregate data bytes, 10,000 array/collection entries, and 100,000 data nodes. Array buffers and typed arrays are limited to 1,000,000 bytes. A `RegExp` source is limited to 1,000 characters and its flags to 32. Regular expressions are supported without an execution-time limit; a pathological expression can block the main thread, so do not evaluate untrusted patterns on a latency-sensitive thread.
 
 ## TypeScript
 

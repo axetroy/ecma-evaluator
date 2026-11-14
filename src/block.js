@@ -9,6 +9,7 @@ const mutableMethods = [
 	"Array.prototype.fill",
 	"Array.prototype.copyWithin",
 
+	"Object.create",
 	"Object.defineProperty",
 	"Object.defineProperties",
 	"Object.preventExtensions",

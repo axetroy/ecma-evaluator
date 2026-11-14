@@ -148,6 +148,33 @@ describe("TemplateParser", () => {
 		});
 	});
 
+	describe("Regex Literals", () => {
+		test("should not treat the closing delimiter inside a regex as the end", () => {
+			const parser = new TemplateParser();
+			assert.deepEqual(
+				parser.parse("{{ /a}}b/ }}").map((t) => t.value),
+				["/a}}b/"]
+			);
+		});
+
+		test("should ignore the delimiter inside a character class or escape", () => {
+			const parser = new TemplateParser();
+			assert.deepEqual(parser.parse("{{ /[}}]/ }}").map((t) => t.value), ["/[}}]/"]);
+			assert.deepEqual(parser.parse("{{ /\\}}/ }}").map((t) => t.value), ["/\\}}/"]);
+		});
+
+		test("should still treat a division slash as an operator", () => {
+			const parser = new TemplateParser();
+			assert.deepEqual(parser.parse("{{ 10 / 2 }}").map((t) => t.value), ["10 / 2"]);
+			assert.deepEqual(parser.parse("{{ (1 + 2) / 3 }}").map((t) => t.value), ["(1 + 2) / 3"]);
+		});
+
+		test("should reset regex context between expressions", () => {
+			const parser = new TemplateParser();
+			assert.deepEqual(parser.parse("{{ 10 / 2 }}{{ /x/ }}").map((t) => t.value), ["10 / 2", "/x/"]);
+		});
+	});
+
 	describe("Resource Limits", () => {
 		test("should reject templates over the configured length", () => {
 			const parser = new TemplateParser({ maxTemplateLength: 3 });

@@ -85,12 +85,13 @@ Evaluator.evaluate("1 + 1"); // 2
 -   `new Evaluator(variables?, options?)`：先校验再克隆 `variables`（默认为空对象），上下文必须受 `structuredClone` 支持且不能含可枚举访问器属性。
 -   `options.maxInputLength`（`number`，默认 `10000`）：该实例允许的最大表达式长度，单位为 UTF-16 代码单元（硬上限 `100000`）。
 -   `options.maxEvaluationSteps`（`number`，默认 `10000`）：每次求值的 AST 节点访问次数上限（硬上限 `100000`）。
+-   `options.maxDepth`（`number`，默认 `1000`）：解释器递归深度上限（硬上限 `2000`）。用于限制嵌套表达式，避免深层嵌套耗尽宿主调用栈；超限抛出 `RangeError: Maximum evaluation depth exceeded`。解析器无法处理的过深输入抛出 `SyntaxError: Expression nesting is too deep to parse`。
 -   `evaluator.evaluate(expression)`：使用实例上下文和选项求值。
 -   `Evaluator.evaluate(expression, variables?)`：使用默认选项的静态便捷方法。
 
 两种方法均返回最后一个表达式的克隆结果，并抛出与 `evalExpression` 相同类别的异常。静态方法不接受选项参数。
 
-上下文和结果还受以下限制：单个字符串最多 100,000 个代码单元，估算数据量合计最多 1,000,000 字节，数组/集合最多 10,000 项，数据节点最多 100,000 个。ArrayBuffer 和类型化数组最多 1,000,000 字节。正则表达式可用且没有执行时间上限；病态正则可能阻塞主线程。
+上下文和结果还受以下限制：单个字符串最多 100,000 个代码单元，估算数据量合计最多 1,000,000 字节，数组/集合最多 10,000 项，数据节点最多 100,000 个。ArrayBuffer 和类型化数组最多 1,000,000 字节。正则表达式可用且没有执行时间上限；`RegExp` 的 source 上限为 1,000 个字符，flags 上限为 32；病态正则可能阻塞主线程，因此不要在对延迟敏感的线程执行不可信正则。
 
 ## TypeScript
 

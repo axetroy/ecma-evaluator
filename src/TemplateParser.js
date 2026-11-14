@@ -72,10 +72,12 @@ class TemplateParser {
 		const length = template.length;
 
 		// 状态机变量
-		let state = "TEXT"; // 当前状态：TEXT | EXPR | STRING_SQ | STRING_DQ | TEMPLATE | ESCAPE_*
+		let state = "TEXT"; // 当前状态：TEXT | EXPR | STRING_SQ | STRING_DQ | TEMPLATE | REGEX | REGEX_CLASS | ESCAPE_*
 		let buffer = ""; // 当前状态的字符缓冲区
 		let exprStartPos = 0; // 当前表达式的开始位置（用于错误恢复）
 		let pos = 0; // 当前扫描位置
+		// 上一次有意义的表达式字符，用于区分正则字面量的 `/` 与除号 `/`
+		let prevExprChar = "";
 
 		// 主解析循环：逐个字符扫描模板
 		while (pos < length) {
@@ -96,6 +98,7 @@ class TemplateParser {
 						// 切换到表达式状态
 						state = "EXPR";
 						exprStartPos = pos; // 记录表达式开始位置
+						prevExprChar = ""; // 每个表达式独立判断正则/除号上下文
 						pos += this.startLen; // 跳过开始标记
 						continue; // 继续处理下一个字符（跳过本次循环的剩余部分）
 					}
@@ -115,6 +118,12 @@ class TemplateParser {
 					} else if (char === "`") {
 						// 进入模板字符串状态
 						state = "TEMPLATE";
+					} else if (char === "/" && this._isRegexPosition(prevExprChar)) {
+						// A `/` in expression position starts a regex literal, which may
+						// itself contain the closing delimiter (e.g. `/}}/`). Track it so
+						// the delimiter inside the pattern is not mistaken for the end of
+						// the expression.
+						state = "REGEX";
 					} else if (char === "\\") {
 						// 遇到转义字符，根据当前上下文进入相应的转义状态
 						if (nextChar === "'") state = "ESCAPE_SQ";
@@ -140,7 +149,11 @@ class TemplateParser {
 						pos += this.endLen; // 跳过结束标记
 						continue;
 					}
-					// 将当前字符添加到表达式缓冲区
+					// 将当前字符添加到表达式缓冲区。空白字符不更新 prevExprChar，
+					// 这样 `{{ /re/ }}` 中前导空格不会让 `/` 被误判为除号。
+					if (!/\s/u.test(char)) {
+						prevExprChar = char;
+					}
 					buffer += char;
 					break;
 
@@ -172,6 +185,27 @@ class TemplateParser {
 					buffer += char;
 					break;
 
+				case "REGEX": // 正则字面量
+					if (char === "\\") {
+						state = "ESCAPE_REGEX";
+					} else if (char === "[") {
+						// A character class may contain an unescaped `/`.
+						state = "REGEX_CLASS";
+					} else if (char === "/") {
+						state = "EXPR"; // 正则结束（flags 之后回到表达式状态）
+					}
+					buffer += char;
+					break;
+
+				case "REGEX_CLASS": // 正则字符类 [...]
+					if (char === "\\") {
+						state = "ESCAPE_REGEX";
+					} else if (char === "]") {
+						state = "REGEX";
+					}
+					buffer += char;
+					break;
+
 				// ==================== 转义状态 ====================
 				// 转义状态：处理转义字符，然后返回到之前的状态
 				case "ESCAPE_SQ":
@@ -187,6 +221,11 @@ class TemplateParser {
 				case "ESCAPE_TEMPLATE":
 					buffer += char;
 					state = "TEMPLATE";
+					break;
+
+				case "ESCAPE_REGEX":
+					buffer += char;
+					state = "REGEX";
 					break;
 
 				case "ESCAPE_EXPR":
@@ -213,6 +252,17 @@ class TemplateParser {
 		}
 
 		return tokens;
+	}
+
+	/**
+	 * 判断 `/` 是否处于正则字面量的起始位置。当上一个有意义的字符是
+	 * 开头、运算符或左括号时，`/` 开始一个正则；否则它是除号。
+	 * @param {string} prev - 上一个有意义的表达式字符（可能为空）
+	 * @returns {boolean}
+	 * @private
+	 */
+	_isRegexPosition(prev) {
+		return prev === "" || "(,=:[!&|?{};+-*%^~<>".includes(prev);
 	}
 
 	/**

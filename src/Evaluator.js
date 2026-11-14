@@ -27,6 +27,18 @@ const MAX_STRING_LENGTH = 100000;
 const MAX_DATA_NODES = 100000;
 const MAX_BIGINT_EXPONENT = 256n;
 const MAX_BIGINT_BITS = 65536;
+const DEFAULT_MAX_DEPTH = 1000;
+const MAX_CONFIGURABLE_DEPTH = 2000;
+const MAX_REGEXP_SOURCE_LENGTH = 1000;
+const MAX_REGEXP_FLAGS_LENGTH = 32;
+/**
+ * Builtins that must never be exposed even though the host runtime provides
+ * them. They are either host-only references (WeakRef/FinalizationRegistry),
+ * escaped-memory handles (SharedArrayBuffer), deprecated helpers, or reflection
+ * surfaces with no legitimate expression use. Kept as an explicit exclusion
+ * list on top of the allowlist below so a future V8 global cannot slip in.
+ */
+const NON_SANDBOX_GLOBALS = new Set(["WeakRef", "FinalizationRegistry", "Iterator", "SharedArrayBuffer", "escape", "unescape"]);
 const TYPED_ARRAY_CONSTRUCTORS = new Set(
 	[
 		Int8Array,
@@ -36,12 +48,43 @@ const TYPED_ARRAY_CONSTRUCTORS = new Set(
 		Uint16Array,
 		Int32Array,
 		Uint32Array,
+		typeof Float16Array === "function" ? Float16Array : null,
 		Float32Array,
 		Float64Array,
 		typeof BigInt64Array === "function" ? BigInt64Array : null,
 		typeof BigUint64Array === "function" ? BigUint64Array : null,
 	].filter((constructor) => typeof constructor === "function")
 );
+
+/**
+ * Returns whether `value` is a typed-array constructor. The explicit set is
+ * the fast path; the `BYTES_PER_ELEMENT` probe also catches typed-array
+ * constructors added to the host *after* this module was loaded, so a new
+ * global (e.g. a future Float16Array) cannot silently escape the size bounds
+ * enforced by {@link Evaluator#assertBoundedConstruction}.
+ */
+function isTypedArrayConstructor(value) {
+	return TYPED_ARRAY_CONSTRUCTORS.has(value) || (typeof value === "function" && typeof value.BYTES_PER_ELEMENT === "number");
+}
+
+/**
+ * Prototype mutators shared by every typed array. They are inherited from
+ * `%TypedArray%.prototype`, so a `hasOwnProperty` walk over each typed-array
+ * prototype never finds them - the explicit string paths in `block.js` are
+ * therefore resolved here against the actual prototype functions.
+ */
+const TYPED_ARRAY_MUTATORS = (() => {
+	const map = new Map();
+	for (const constructor of TYPED_ARRAY_CONSTRUCTORS) {
+		for (const name of ["set", "fill", "reverse", "sort", "copyWithin"]) {
+			const method = constructor.prototype[name];
+			if (typeof method === "function" && !map.has(method)) {
+				map.set(method, name);
+			}
+		}
+	}
+	return map;
+})();
 /**
  * Sentinel used to distinguish "caller passed no pre-evaluated object" from
  * "the object expression itself evaluated to undefined". See
@@ -187,8 +230,19 @@ function createGlobalScope() {
 	const scope = Object.create(null);
 	const { builtin } = globals;
 
+	// Allowlist: expose a builtin only when the host actually provides it and
+	// it is not explicitly denied. A missing global (e.g. BigInt64Array on an
+	// old runtime, or Float16Array before it shipped) is simply skipped instead
+	// of being defined as `undefined`, so `typeof Missing === "undefined"` and
+	// identifier resolution behave as the platform does.
 	for (const key in builtin) {
 		if (blockedGlobalBuiltIns.includes(key)) {
+			continue;
+		}
+		if (NON_SANDBOX_GLOBALS.has(key)) {
+			continue;
+		}
+		if (!Object.hasOwn(globalThis, key)) {
 			continue;
 		}
 
@@ -212,6 +266,11 @@ function createGlobalScope() {
 
 	return scope;
 }
+
+// The sandbox global scope is identical for every instance, so build it once.
+// Rebuilding it per `new Evaluator()` cost a full `defineProperty` pass over
+// every builtin (measurably ~5x slower for short-lived instances).
+const GLOBAL_SCOPE = createGlobalScope();
 
 const getBlockedMethods = (() => {
 	/**
@@ -267,13 +326,15 @@ export class Evaluator {
 	constructor(variables = Object.create(null), options) {
 		this.maxInputLength = validateLimit(options?.maxInputLength, "maxInputLength", DEFAULT_MAX_INPUT_LENGTH, MAX_CONFIGURABLE_INPUT_LENGTH);
 		this.maxEvaluationSteps = validateLimit(options?.maxEvaluationSteps, "maxEvaluationSteps", DEFAULT_MAX_EVALUATION_STEPS, MAX_CONFIGURABLE_EVALUATION_STEPS);
+		this.maxDepth = validateLimit(options?.maxDepth, "maxDepth", DEFAULT_MAX_DEPTH, MAX_CONFIGURABLE_DEPTH);
 		assertBoundedData(variables, "Evaluation context");
 		const clonedVariables = structuredClone(variables);
-		this.scopes = [clonedVariables, createGlobalScope()].filter((scope) => scope !== null && scope !== undefined);
+		this.scopes = [clonedVariables, GLOBAL_SCOPE].filter((scope) => scope !== null && scope !== undefined);
 		this.source = undefined;
 		this.remainingEvaluationSteps = 0;
 		this.remainingDataSize = MAX_BUFFER_BYTES;
 		this.remainingDataNodes = MAX_DATA_NODES;
+		this.evaluationDepth = 0;
 	}
 
 	/**
@@ -308,8 +369,20 @@ export class Evaluator {
 		this.remainingEvaluationSteps = this.maxEvaluationSteps;
 		this.remainingDataSize = MAX_BUFFER_BYTES;
 		this.remainingDataNodes = MAX_DATA_NODES;
+		this.evaluationDepth = 0;
 
-		const ast = acorn.parse(expression, { ecmaVersion: "latest" });
+		let ast;
+		try {
+			ast = acorn.parse(expression, { ecmaVersion: "latest" });
+		} catch (error) {
+			// acorn parses recursively; a deeply nested expression can exhaust the
+			// host call stack before evaluation ever starts. Surface it as a
+			// normal SyntaxError instead of leaking a stack-overflow RangeError.
+			if (error instanceof RangeError && /call stack/i.test(error.message)) {
+				throw new SyntaxError("Expression nesting is too deep to parse");
+			}
+			throw error;
+		}
 
 		// Start recursive evaluation from the root node
 		try {
@@ -381,6 +454,23 @@ export class Evaluator {
 			throw new RangeError("Evaluation step limit exceeded");
 		}
 
+		// Bound interpreter recursion depth so a deeply nested expression
+		// (e.g. `[[[[...]]]]`) cannot exhaust the host call stack. The parser
+		// has its own, lower practical limit, but the visitor is reached from
+		// native callbacks too, so it needs an explicit ceiling.
+		this.evaluationDepth++;
+		if (this.evaluationDepth > this.maxDepth) {
+			this.evaluationDepth--;
+			throw new RangeError("Maximum evaluation depth exceeded");
+		}
+		try {
+			return this.visitNode(node);
+		} finally {
+			this.evaluationDepth--;
+		}
+	}
+
+	visitNode(node) {
 		switch (node.type) {
 			case "ExpressionStatement": {
 				return this.visit(node.expression);
@@ -510,7 +600,25 @@ export class Evaluator {
 		throw new SyntaxError(`Unsupported operator: ${node.operator}`);
 	}
 
+	/**
+	 * Bounds a regular-expression pattern. There is no execution-time limit on
+	 * a native RegExp, so an oversized source/flags string is rejected up front
+	 * rather than allowed to build a pathological matcher.
+	 * @private
+	 */
+	assertBoundedRegExp(args) {
+		if (typeof args[0] === "string" && args[0].length > MAX_REGEXP_SOURCE_LENGTH) {
+			throw new RangeError("RegExp source exceeds the maximum allowed length");
+		}
+		if (typeof args[1] === "string" && args[1].length > MAX_REGEXP_FLAGS_LENGTH) {
+			throw new RangeError("RegExp flags exceed the maximum allowed length");
+		}
+	}
+
 	assertBoundedConstruction(Constructor, args) {
+		if (Constructor === RegExp) {
+			this.assertBoundedRegExp(args);
+		}
 		const size = args[0];
 		if (Constructor === Array && args.length === 1 && typeof size === "number" && size > MAX_ARRAY_LENGTH) {
 			throw new RangeError("Array length exceeds the maximum allowed length");
@@ -527,7 +635,7 @@ export class Evaluator {
 				throw new RangeError("Collection source exceeds the maximum allowed size");
 			}
 		}
-		if (TYPED_ARRAY_CONSTRUCTORS.has(Constructor)) {
+		if (isTypedArrayConstructor(Constructor)) {
 			let byteLength;
 			if (size instanceof ArrayBuffer) {
 				const offset = args[1] ?? 0;
@@ -634,8 +742,12 @@ export class Evaluator {
 			throw new Error(renderErrorMessage(ERROR_MESSAGES.IS_NOT_ALLOWED, ["Accessing error stack"]));
 		}
 
-		// Prevent access to prototype properties
-		if (typeof object !== "undefined" && object !== null && object[property] === object?.__proto__) {
+		// Prevent access to prototype properties. The comparison must be guarded
+		// against a null/undefined prototype: for a null-prototype object
+		// (`Object.create(null)`) `object[property]` and `object.__proto__` are
+		// both `undefined`, and `undefined === undefined` would otherwise reject
+		// every missing property with a misleading "prototype" error.
+		if (typeof object !== "undefined" && object !== null && object.__proto__ !== undefined && object[property] === object.__proto__) {
 			throw new Error(renderErrorMessage(ERROR_MESSAGES.IS_NOT_ALLOWED, ["Accessing prototype properties"]));
 		}
 
@@ -817,6 +929,12 @@ export class Evaluator {
 			const path = getBlockedMethods().get(func);
 			throw new Error(renderErrorMessage(ERROR_MESSAGES.IS_NOT_ALLOWED, [path]));
 		}
+		// Typed-array mutators live on `%TypedArray%.prototype`, which the
+		// own-property walk in `getBlockedMethods` never reaches, so resolve
+		// them against the real prototype functions here.
+		if (TYPED_ARRAY_MUTATORS.has(func)) {
+			throw new Error(renderErrorMessage(ERROR_MESSAGES.IS_NOT_ALLOWED, [`TypedArray.prototype.${TYPED_ARRAY_MUTATORS.get(func)}`]));
+		}
 
 		// 仅在存在参数时构建数组
 		const args = (() => {
@@ -884,7 +1002,10 @@ export class Evaluator {
 				}
 			}
 		}
-		if ((target === Array || TYPED_ARRAY_CONSTRUCTORS.has(target)) && func === target.from) {
+		if (func === RegExp) {
+			this.assertBoundedRegExp(args);
+		}
+		if ((target === Array || isTypedArrayConstructor(target)) && func === target.from) {
 			const source = args[0];
 			const size = typeof source === "string" || Array.isArray(source) ? source.length : source?.size ?? source?.length;
 			if (typeof size === "number" && size > MAX_ARRAY_LENGTH) {
@@ -943,7 +1064,7 @@ export function getNodeString(node) {
 			return node.raw;
 		}
 		case "ArrayExpression": {
-			return `[${node.elements.map((child) => getNodeString(child)).join(",")}]`;
+			return `[${node.elements.map((child) => (child === null ? "" : getNodeString(child))).join(",")}]`;
 		}
 		case "ObjectExpression": {
 			// if keys is empty
