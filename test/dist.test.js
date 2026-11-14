@@ -1,4 +1,5 @@
 import test, { before } from "node:test";
+import assert from "node:assert";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -16,12 +17,16 @@ before(() => {
 	});
 });
 
-test("test esm output", (t) => {
-	const targetDir = path.join(rootDir, "fixtures", "esm");
+// Run the fixture entry file directly instead of through `npm run`. npm
+// prepends a banner whose wording varies by npm version, which made the old
+// snapshot brittle. The fixture still resolves `ecma-evaluator` through its own
+// node_modules, so this exercises the built `exports` map end to end.
+function runFixture(dir, file) {
+	const targetDir = path.join(rootDir, "fixtures", dir);
 
 	execSync("pnpm install", { cwd: targetDir, stdio: "inherit" });
 
-	const output = execSync("npm run test --no-color", {
+	const output = execSync(`node ${file}`, {
 		cwd: targetDir,
 		stdio: "pipe",
 		env: {
@@ -30,26 +35,13 @@ test("test esm output", (t) => {
 		},
 	});
 
-	t.assert.snapshot(output.toString(), {
-		serializers: [(value) => value],
-	});
+	return output.toString().trim();
+}
+
+test("test esm output", () => {
+	assert.equal(runFixture("esm", "index.mjs"), "[Function: evalExpression] [Function: evalTemplate]");
 });
 
-test("test cjs output", (t) => {
-	const targetDir = path.join(rootDir, "fixtures", "cjs");
-
-	execSync("pnpm install", { cwd: targetDir, stdio: "inherit" });
-
-	const output = execSync("npm run test --no-color", {
-		cwd: targetDir,
-		stdio: "pipe",
-		env: {
-			PATH: process.env.PATH,
-			NO_COLOR: "1",
-		},
-	});
-
-	t.assert.snapshot(output.toString(), {
-		serializers: [(value) => value],
-	});
+test("test cjs output", () => {
+	assert.equal(runFixture("cjs", "index.cjs"), "[Function: evalExpression] [Function: evalTemplate]");
 });

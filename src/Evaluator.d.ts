@@ -11,6 +11,12 @@ export interface EvaluatorOptions {
 	 * @default 10000
 	 */
 	maxEvaluationSteps?: number;
+	/**
+	 * Maximum interpreter recursion depth (hard maximum: 2000). Bounds nested
+	 * expressions so a deeply nested input cannot exhaust the host call stack.
+	 * @default 1000
+	 */
+	maxDepth?: number;
 }
 
 export declare class Evaluator {
@@ -21,4 +27,8 @@ export declare class Evaluator {
 	evaluate<T = unknown>(expression: string): T;
 }
 
-export declare function getNodeString(node: Node): string;
+/**
+ * Renders an AST node back to a short source-like string. Returns `null` for
+ * node types that have no textual representation.
+ */
+export declare function getNodeString(node: Node): string | null;

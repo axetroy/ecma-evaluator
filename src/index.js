@@ -32,7 +32,8 @@ export function evalExpression(expression, context) {
 
 /**
  * Evaluates a template string by replacing {{ expression }} patterns with their evaluated values.
- * Undefined variables in expressions are replaced with empty strings instead of throwing errors.
+ * An expression that references an undefined variable resolves to the string
+ * `"undefined"` instead of throwing, so a missing variable degrades gracefully.
  * @param {string} template - The template string containing {{ expression }} patterns
  * @param {Object} [context] - Optional context object with variables to use in expressions
  * @param {Object} [templateParserOptions] - Optional options for the template parser

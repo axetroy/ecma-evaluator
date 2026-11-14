@@ -28,7 +28,7 @@ evalExpression("[1, 2, 3].map(value => value * 2)"); // [2, 4, 6]
 
 沙箱开放一组受限内置对象，包括 `Math`、`Number`、`String`、`Boolean`、`Array`、`Object`、`Map`、`Set`、`Date`、`RegExp`、部分类型化数组和标准错误构造函数，也开放常用数值及 URI 辅助函数。正则表达式可通过字面量、`RegExp` 和字符串方法使用。
 
-沙箱不开放 `Promise`、`Function`、`eval`、`process`、`require`、浏览器全局对象以及文件/网络 API。`WeakMap` 和 `WeakSet` 实例不能通过结构化克隆边界；`Symbol` 值也不能通过该边界传递。
+沙箱不开放 `Promise`、`Function`、`eval`、`process`、`require`、浏览器全局对象以及文件/网络 API，也不开放宿主专用引用（`WeakRef`、`FinalizationRegistry`、`Iterator`）、已废弃的辅助函数（`escape`、`unescape`）以及 `SharedArrayBuffer`。`WeakMap` 和 `WeakSet` 实例不能通过结构化克隆边界；`Symbol` 值也不能通过该边界传递。
 
 ## 副作用与数据
 

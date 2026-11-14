@@ -28,8 +28,8 @@
         }
     },
     "scripts": {
-        "test": "node --test **/*.test.js",
-        "test:update-snapshots": "node --test-update-snapshots --test **/*.test.js",
+        "test": "node --test \"**/*.test.{js,mjs}\"",
+        "test:update-snapshots": "node --test-update-snapshots --test \"**/*.test.{js,mjs}\"",
         "build": "knip && rslib build",
         "docs:dev": "vitepress dev docs",
         "docs:build": "vitepress build docs",
@@ -40,6 +40,9 @@
     },
     "author": "Axetroy <axetroy.dev@gmail.com>",
     "license": "SEE LICENSE IN LICENSE",
+    "engines": {
+        "node": ">=18"
+    },
     "devDependencies": {
         "@changesets/cli": "2.31.1",
         "@rslib/core": "^0.18.0",

@@ -40,6 +40,11 @@ class RspackDtsCopyPlugin {
 	}
 }
 
+// `syntax: "es5"` controls only the emitted JavaScript *syntax* (no arrow
+// functions, `let`/`const`, etc.). It is not a runtime-compatibility promise:
+// the code still relies on Node >= 18 APIs such as `structuredClone`,
+// `Object.hasOwn`, and `Array.prototype.at`, as declared by `engines` in
+// package.json.
 export default defineConfig({
 	source: {
 		entry: {
