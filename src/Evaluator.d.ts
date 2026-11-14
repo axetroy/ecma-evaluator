@@ -1,5 +1,3 @@
-import { Node } from "acorn";
-
 export interface EvaluatorOptions {
 	/**
 	 * Maximum expression length in UTF-16 code units (hard maximum: 100000).
@@ -26,9 +24,3 @@ export declare class Evaluator {
 
 	evaluate<T = unknown>(expression: string): T;
 }
-
-/**
- * Renders an AST node back to a short source-like string. Returns `null` for
- * node types that have no textual representation.
- */
-export declare function getNodeString(node: Node): string | null;

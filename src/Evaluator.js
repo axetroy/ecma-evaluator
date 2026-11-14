@@ -1,6 +1,7 @@
 import * as acorn from "acorn";
 import globals from "globals";
 import { blockedGlobalBuiltIns, blockedMethods } from "./block.js";
+import { isUnsafeRegExpPattern } from "./regExpSafety.js";
 
 // Error message constants for better maintainability
 const ERROR_MESSAGES = {
@@ -90,6 +91,37 @@ const TYPED_ARRAY_MUTATORS = (() => {
  * "the object expression itself evaluated to undefined". See
  * {@link Evaluator#handleMemberExpression}.
  */
+/**
+ * The `RegExp.prototype` methods that execute the receiver's own pattern when
+ * reached through a `Symbol.*` key (`re[Symbol.match](s)` and friends). They are
+ * distinct function objects from `test`/`exec`, so the invocation screen must
+ * name them explicitly.
+ */
+const REGEXP_SYMBOL_METHODS = new Set(
+	[Symbol.match, Symbol.matchAll, Symbol.replace, Symbol.search, Symbol.split]
+		.map((symbol) => RegExp.prototype[symbol])
+		.filter((method) => typeof method === "function"),
+);
+
+/**
+ * Maps the native methods whose invocation can execute an unscreened pattern to
+ * how the pattern is reached, so {@link assertSafeRegExpInvocation} can bail out
+ * with a single lookup for every other call.
+ */
+const REGEXP_INVOCATION_KIND = (() => {
+	const map = new Map();
+	for (const method of [String.prototype.match, String.prototype.matchAll, String.prototype.search]) {
+		map.set(method, "stringPattern");
+	}
+	for (const method of [RegExp.prototype.test, RegExp.prototype.exec, ...REGEXP_SYMBOL_METHODS]) {
+		map.set(method, "receiverPattern");
+	}
+	for (const method of [String.prototype.replace, String.prototype.replaceAll, String.prototype.split]) {
+		map.set(method, "regexArgument");
+	}
+	return map;
+})();
+
 const NO_OBJECT = Symbol("no-object");
 
 /**
@@ -102,6 +134,61 @@ const NO_OBJECT = Symbol("no-object");
  * ```
  */
 const renderErrorMessage = (template, context = {}) => template.replace(/{(\w+)}/g, (_, key) => String(context[key]));
+
+/**
+ * Rejects a pattern that is structurally prone to catastrophic backtracking.
+ * There is no execution-time limit on a native RegExp, so this screen is the
+ * only thing standing between an untrusted pattern and an event-loop hang.
+ * @param {string} pattern
+ */
+function assertSafeRegExpPattern(pattern) {
+	if (typeof pattern === "string" && isUnsafeRegExpPattern(pattern)) {
+		throw new RangeError("RegExp pattern may cause catastrophic backtracking and is not allowed");
+	}
+}
+
+/**
+ * Screens a regex that reaches a native method by a path the construction-time
+ * screen does not cover:
+ *
+ *   - a `RegExp` supplied by the host in the evaluation context (it is cloned in
+ *     verbatim and never passed through {@link assertSafeRegExpPattern});
+ *   - a string argument to `String.prototype.match`/`matchAll`/`search`, which
+ *     the host compiles with `new RegExp(...)` internally, so a pattern like
+ *     `"(a+)+b"` is never seen by the literal / `RegExp()` screen.
+ *
+ * `replace`/`replaceAll`/`split` treat a *string* argument as a literal, so only
+ * a `RegExp` argument can execute as a pattern there.
+ * @param {Function} func - The resolved callee.
+ * @param {*} target - The call receiver.
+ * @param {Array<*>} args - The evaluated arguments.
+ */
+function assertSafeRegExpInvocation(func, target, args) {
+	// One Set lookup keeps this off the hot path for ordinary calls.
+	const kind = REGEXP_INVOCATION_KIND.get(func);
+	if (kind === undefined) {
+		return;
+	}
+	if (kind === "stringPattern") {
+		// match/matchAll/search compile a *string* argument into a RegExp
+		// internally, so the pattern never passes the construction-time screen.
+		const pattern = args[0];
+		if (typeof pattern === "string") {
+			assertSafeRegExpPattern(pattern);
+		} else if (pattern instanceof RegExp) {
+			assertSafeRegExpPattern(pattern.source);
+		}
+		return;
+	}
+	// "receiverPattern": test/exec and the `RegExp.prototype[Symbol.*]` methods all
+	// run the receiver's own pattern, which may be a context-supplied RegExp.
+	// "regexArgument": replace/replaceAll/split run a RegExp *argument*; a string
+	// argument there is a literal, so it cannot execute as a pattern.
+	const regexp = kind === "receiverPattern" ? target : args[0];
+	if (regexp instanceof RegExp) {
+		assertSafeRegExpPattern(regexp.source);
+	}
+}
 
 function validateLimit(value, name, defaultValue, maximum) {
 	if (value === undefined) {
@@ -125,6 +212,32 @@ function countLiteralMatches(value, search, all) {
 			break;
 		}
 		position += search.length;
+	}
+	return count;
+}
+
+/**
+ * Counts the matches a `replace`/`replaceAll` call would make, so the output
+ * size can be bounded *before* the native engine builds the whole result. The
+ * pattern has already passed {@link assertSafeRegExpPattern}, so the per-match
+ * work is bounded; the only hazard here is a zero-width match, where `exec`
+ * leaves `lastIndex` unchanged and the loop would never terminate. Advancing
+ * `lastIndex` manually mirrors `String.prototype.replace`'s own empty-match
+ * handling. The count is capped so a pathological target cannot spin the loop.
+ */
+function countRegExpMatches(value, regexp, all) {
+	const flags = regexp.flags.includes("g") ? regexp.flags : regexp.flags + "g";
+	const re = new RegExp(regexp.source, flags);
+	let count = 0;
+	let match;
+	while ((match = re.exec(value)) !== null) {
+		count++;
+		if (!all || count > MAX_STRING_LENGTH) {
+			break;
+		}
+		if (re.lastIndex === match.index) {
+			re.lastIndex++;
+		}
 	}
 	return count;
 }
@@ -338,8 +451,18 @@ function createGlobalScope() {
 
 // The sandbox global scope is identical for every instance, so build it once.
 // Rebuilding it per `new Evaluator()` cost a full `defineProperty` pass over
-// every builtin (measurably ~5x slower for short-lived instances).
-const GLOBAL_SCOPE = createGlobalScope();
+// every builtin (measurably ~5x slower for short-lived instances). Construction
+// is deferred to first use and memoised so that importing the module has no
+// side effect at all - `sideEffects: false` in package.json then holds exactly,
+// and a bundler may drop the whole module when nothing from it is used.
+let GLOBAL_SCOPE = null;
+
+function getGlobalScope() {
+	if (GLOBAL_SCOPE === null) {
+		GLOBAL_SCOPE = createGlobalScope();
+	}
+	return GLOBAL_SCOPE;
+}
 
 /**
  * Shared default evaluation context. It is frozen and has a null prototype, and
@@ -401,6 +524,7 @@ export class Evaluator {
 	 * @param {Object} [options={}] - Additional configuration options
 	 * @param {number} [options.maxInputLength=10000] - Maximum expression length (hard maximum: 100000)
 	 * @param {number} [options.maxEvaluationSteps=10000] - Maximum AST node visits per evaluation (hard maximum: 100000)
+	 * @param {number} [options.maxDepth=1000] - Maximum interpreter recursion depth (hard maximum: 2000)
 	 */
 	constructor(variables = EMPTY_CONTEXT, options) {
 		this.maxInputLength = validateLimit(options?.maxInputLength, "maxInputLength", DEFAULT_MAX_INPUT_LENGTH, MAX_CONFIGURABLE_INPUT_LENGTH);
@@ -414,9 +538,23 @@ export class Evaluator {
 			assertBoundedData(variables, "Evaluation context");
 			clonedVariables = structuredClone(variables);
 		}
-		this.scopes = [clonedVariables, GLOBAL_SCOPE].filter((scope) => scope !== null && scope !== undefined);
+		this.scopes = [clonedVariables, getGlobalScope()].filter((scope) => scope !== null && scope !== undefined);
 		this.source = undefined;
+		this.evaluating = false;
 		this.remainingEvaluationSteps = 0;
+		this.remainingDataSize = MAX_BUFFER_BYTES;
+		this.remainingDataNodes = MAX_DATA_NODES;
+		this.evaluationDepth = 0;
+	}
+
+	/**
+	 * Resets the per-evaluation resource budgets. Called at the start of every
+	 * `evaluate()` and, for a direct `execute()` call, at its entry. Centralised
+	 * so a thrown limit never leaves a stale counter behind.
+	 * @private
+	 */
+	resetBudget() {
+		this.remainingEvaluationSteps = this.maxEvaluationSteps;
 		this.remainingDataSize = MAX_BUFFER_BYTES;
 		this.remainingDataNodes = MAX_DATA_NODES;
 		this.evaluationDepth = 0;
@@ -451,17 +589,16 @@ export class Evaluator {
 		}
 
 		this.source = expression;
-		this.remainingEvaluationSteps = this.maxEvaluationSteps;
-		this.remainingDataSize = MAX_BUFFER_BYTES;
-		this.remainingDataNodes = MAX_DATA_NODES;
-		this.evaluationDepth = 0;
+		this.resetBudget();
 
 		const ast = parseExpression(expression);
 
 		// Start recursive evaluation from the root node
+		this.evaluating = true;
 		try {
 			return this.execute(ast.body);
 		} finally {
+			this.evaluating = false;
 			this.source = undefined;
 		}
 	}
@@ -473,10 +610,13 @@ export class Evaluator {
 	 * @returns {*} The result of the last executed node
 	 */
 	execute(body) {
-		if (this.remainingEvaluationSteps === 0) {
-			this.remainingEvaluationSteps = this.maxEvaluationSteps;
-			this.remainingDataSize = MAX_BUFFER_BYTES;
-			this.remainingDataNodes = MAX_DATA_NODES;
+		// `evaluate()` resets the budget before calling in. A direct call to this
+		// method (a documented escape hatch used by tests) has no such reset, so
+		// initialise on entry. Keying on `evaluating` rather than on a counter value
+		// avoids the previous bug where a thrown step limit left
+		// `remainingEvaluationSteps` at -1 and defeated the `=== 0` guard.
+		if (!this.evaluating) {
+			this.resetBudget();
 		}
 		let result;
 
@@ -565,6 +705,12 @@ export class Evaluator {
 					return this.handleIdentifier(node);
 				}
 				case "Literal": {
+					// A regex literal is parsed by acorn into `node.regex`, but
+					// `node.value` is a live RegExp that the sandbox would otherwise
+					// hand back. Screen the pattern before it can be used.
+					if (node.regex) {
+						assertSafeRegExpPattern(node.regex.pattern);
+					}
 					return node.value;
 				}
 				case "MemberExpression": {
@@ -683,7 +829,8 @@ export class Evaluator {
 	/**
 	 * Bounds a regular-expression pattern. There is no execution-time limit on
 	 * a native RegExp, so an oversized source/flags string is rejected up front
-	 * rather than allowed to build a pathological matcher.
+	 * and a pattern with catastrophic-backtracking structure is refused, rather
+	 * than allowed to build a pathological matcher.
 	 * @private
 	 */
 	assertBoundedRegExp(args) {
@@ -693,6 +840,7 @@ export class Evaluator {
 		if (typeof args[1] === "string" && args[1].length > MAX_REGEXP_FLAGS_LENGTH) {
 			throw new RangeError("RegExp flags exceed the maximum allowed length");
 		}
+		assertSafeRegExpPattern(args[0]);
 	}
 
 	assertBoundedConstruction(Constructor, args) {
@@ -1000,8 +1148,11 @@ export class Evaluator {
 		// Error.prepareStackTrace is a host-installed callback. It must be
 		// checked dynamically: the blocked-methods map is built lazily on first
 		// use, so a host that installs the callback *after* that point would
-		// otherwise evade the static blocklist.
-		if (func === Error.prepareStackTrace) {
+		// otherwise evade the static blocklist. The `typeof` guard matters: on
+		// runtimes that leave `Error.prepareStackTrace` undefined (Node 18, 24),
+		// a bare identity test also matches a non-function callee (`undefined`),
+		// which would mask the real "is not a function" error.
+		if (typeof func === "function" && func === Error.prepareStackTrace) {
 			throw new Error(renderErrorMessage(ERROR_MESSAGES.IS_NOT_ALLOWED, ["Error.prepareStackTrace"]));
 		}
 
@@ -1060,17 +1211,34 @@ export class Evaluator {
 				}
 			}
 			if ((String.prototype.replace && func === String.prototype.replace) || (String.prototype.replaceAll && func === String.prototype.replaceAll)) {
-				if (typeof args[0] === "string") {
-					if (typeof args[1] === "function" || (typeof args[1] === "string" && /\$(?:[$&'`])/u.test(args[1]))) {
-						throw new Error("Only literal string replacements are allowed");
-					}
-					if (target.length * Math.max(1, args[0].length) > 10000000) {
+				const all = func === String.prototype.replaceAll;
+				const search = args[0];
+				const replacement = args[1];
+				if (typeof replacement === "function") {
+					throw new Error("Only literal string replacements are allowed");
+				}
+				// `$&`, `` $` ``, `$'` and `$$` expand against the matched text, so a
+				// tiny pattern can be amplified into an arbitrarily large result. This
+				// must be rejected for string *and* RegExp patterns: the native engine
+				// builds the whole expanded string before any post-hoc length check, so
+				// a check that only covered string patterns left a memory-exhaustion
+				// hole (`"a".repeat(1e5).replace(/a/g, "$&".repeat(1000))`).
+				if (typeof replacement === "string" && /\$(?:[$&'`])/u.test(replacement)) {
+					throw new Error("Only literal string replacements are allowed");
+				}
+				let matchCount;
+				if (typeof search === "string") {
+					if (target.length * Math.max(1, search.length) > 10000000) {
 						throw new RangeError("String operation exceeds the maximum work limit");
 					}
-					const matchCount = countLiteralMatches(target, args[0], func === String.prototype.replaceAll);
-					if (target.length + matchCount * String(args[1]).length > MAX_STRING_LENGTH) {
-						throw new RangeError("String result exceeds the maximum allowed length");
-					}
+					matchCount = countLiteralMatches(target, search, all);
+				} else if (search instanceof RegExp) {
+					matchCount = countRegExpMatches(target, search, all);
+				} else {
+					matchCount = 0;
+				}
+				if (target.length + matchCount * String(replacement).length > MAX_STRING_LENGTH) {
+					throw new RangeError("String result exceeds the maximum allowed length");
 				}
 			}
 			if (func === String.prototype.split) {
@@ -1085,6 +1253,11 @@ export class Evaluator {
 		if (func === RegExp) {
 			this.assertBoundedRegExp(args);
 		}
+		// A regex can reach a native method without passing the construction-time
+		// screen: a host-supplied `RegExp` in the context, or a string argument to
+		// `match`/`matchAll`/`search` (which the host compiles internally). Screen
+		// it here, right before the call.
+		assertSafeRegExpInvocation(func, target, args);
 		if ((target === Array || isTypedArrayConstructor(target)) && func === target.from) {
 			const source = args[0];
 			const size = typeof source === "string" || Array.isArray(source) ? source.length : source?.size ?? source?.length;
