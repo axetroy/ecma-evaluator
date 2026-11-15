@@ -659,6 +659,16 @@ describe("Functions", () => {
 			assert.equal(evaluator.evaluate("((a, b, c) => [a, b, c].length)(1, 2, 3)"), 3);
 			assert.deepEqual(evaluator.evaluate("((a, b, c) => [a, b, c])(1, 2, 3)"), [1, 2, 3]);
 		});
+
+		test("should reject destructuring, default, and rest parameters instead of mis-binding", () => {
+			// A non-identifier parameter is not an Identifier node, so it has no
+			// `.name`. Before this was rejected the binding was written to a property
+			// literally named "undefined", which both mis-bound the argument and
+			// shadowed the `undefined` global inside the body.
+			for (const expression of ["(({a}) => a)({a: 1})", "(([a]) => a)([1])", "((a = 5) => a)()", "((...rest) => rest)(1)", "(({a}) => undefined)({a: 1})"]) {
+				assert.throws(() => evaluator.evaluate(expression), { name: "SyntaxError" }, expression);
+			}
+		});
 	});
 
 	describe("Method Calls", () => {

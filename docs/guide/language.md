@@ -11,7 +11,7 @@ The evaluator accepts expressions and semicolon-separated expression sequences. 
 | Literals and data | Numbers, strings, booleans, `null`, `undefined`, arrays, and parenthesized object literals |
 | Operators | Arithmetic, comparison, equality, logical, nullish-coalescing, bitwise, unary, and ternary operators |
 | Access | Dot access, computed access, and optional chaining |
-| Functions | Arrow functions and calls to exposed functions/methods |
+| Functions | Arrow functions (simple identifier parameters only) and calls to exposed functions/methods |
 | Other expressions | Template literals and `new` expressions for exposed constructors |
 
 ```js

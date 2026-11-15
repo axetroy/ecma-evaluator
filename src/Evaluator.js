@@ -1036,7 +1036,7 @@ export class Evaluator {
 		const result = [];
 
 		for (let i = 0; i < node.elements.length; i++) {
-			const element = node.elements.at(i);
+			const element = node.elements[i];
 
 			// Array holes (`[1, , 3]`) are represented as null elements by
 			// acorn. Preserve them instead of crashing on node.type access.
@@ -1110,6 +1110,17 @@ export class Evaluator {
 	 * @private
 	 */
 	handleArrowFunctionExpression(node) {
+		// Only simple identifier parameters are supported. A destructuring,
+		// default (`a = 1`) or rest (`...a`) parameter is not an Identifier, so
+		// `param.name` would be `undefined` and the binding would be written to a
+		// property literally named "undefined" — silently mis-binding the argument
+		// and shadowing the `undefined` global inside the body. Reject such a
+		// signature up front instead of evaluating it incorrectly.
+		for (const param of node.params) {
+			if (param.type !== "Identifier") {
+				throw new SyntaxError(renderErrorMessage(ERROR_MESSAGES.IS_NOT_ALLOWED, ["Destructuring, default, and rest parameters"]));
+			}
+		}
 		return (...args) => {
 			// Create new scope with parameters bound to arguments
 			const newScope = {};
@@ -1202,7 +1213,7 @@ export class Evaluator {
 			let result = [];
 
 			for (let i = 0; i < node.arguments.length; i++) {
-				const element = node.arguments.at(i);
+				const element = node.arguments[i];
 				const value = this.visit(element);
 
 				if (element.type === "SpreadElement") {
