@@ -1496,6 +1496,12 @@ describe("Security and Restrictions", () => {
 			// regex patterns exactly as it is for string patterns.
 			assert.throws(() => evaluator.evaluate('"a".repeat(100000).replace(/a/g, "$&$&$&$&$&")'), /Only literal string replacements/);
 			assert.throws(() => evaluator.evaluate('"a".repeat(100000).replace(/a/, "x".repeat(100000))'), /maximum allowed length/);
+			// A *global* regexp in `replace` also replaces every match, so the bound
+			// must count them all; otherwise a large replacement is under-counted.
+			assert.throws(() => evaluator.evaluate('"a".repeat(1000).replace(/a/g, "x".repeat(50000))'), /maximum allowed length/);
+			// A RegExp separator in `split` produces one entry per match, so it must
+			// be bounded exactly like the string-separator path.
+			assert.throws(() => evaluator.evaluate('"a".repeat(100000).split(/a/)'), /maximum allowed length/);
 			assert.throws(() => evaluator.evaluate('"abc".replace(/b/, () => "X")'), /Only literal string replacements/);
 			assert.throws(() => evaluator.evaluate("2n ** 257n"), /BigInt exponent/);
 			assert.throws(() => evaluator.evaluate("1n << 65537n"), /BigInt result/);

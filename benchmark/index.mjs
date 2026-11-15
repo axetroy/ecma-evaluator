@@ -24,6 +24,8 @@ const CASES = [
 	{ name: "conditional", expr: "a > b ? a - b : b - a", context: { a: 10, b: 4 } },
 	{ name: "nested member", expr: "data.items[0].value + data.items[1].value", context: { data: { items: [{ value: 1 }, { value: 2 }] } } },
 	{ name: "big mixed", expr: "users.filter(u => u.active).map(u => u.age).reduce((a, b) => a + b, 0)", context: { users: [{ active: true, age: 30 }, { active: false, age: 40 }, { active: true, age: 25 }] } },
+	{ name: "regex literal test", expr: "/^[a-z]+$/.test(name)", context: { name: "ada" } },
+	{ name: "regex literal replace", expr: "text.replace(/o/g, '0')", context: { text: "hello world" } },
 ];
 
 const TEMPLATE_CASE = {

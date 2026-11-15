@@ -136,15 +136,32 @@ const NO_OBJECT = Symbol("no-object");
 const renderErrorMessage = (template, context = {}) => template.replace(/{(\w+)}/g, (_, key) => String(context[key]));
 
 /**
+ * Bounded memo of patterns already proven safe. A regex literal is screened on
+ * every evaluation of its node and the analysis costs ~150-400ns, a measurable
+ * share of a short regex expression. Only safe patterns are cached; an unsafe
+ * one throws on first sight, so it never reaches the cache. Eviction is FIFO,
+ * mirroring {@link PARSE_CACHE}.
+ */
+const SAFE_REGEXP_PATTERNS = new Set();
+const MAX_SAFE_REGEXP_PATTERNS = 1000;
+
+/**
  * Rejects a pattern that is structurally prone to catastrophic backtracking.
  * There is no execution-time limit on a native RegExp, so this screen is the
  * only thing standing between an untrusted pattern and an event-loop hang.
  * @param {string} pattern
  */
 function assertSafeRegExpPattern(pattern) {
-	if (typeof pattern === "string" && isUnsafeRegExpPattern(pattern)) {
+	if (typeof pattern !== "string" || SAFE_REGEXP_PATTERNS.has(pattern)) {
+		return;
+	}
+	if (isUnsafeRegExpPattern(pattern)) {
 		throw new RangeError("RegExp pattern may cause catastrophic backtracking and is not allowed");
 	}
+	if (SAFE_REGEXP_PATTERNS.size >= MAX_SAFE_REGEXP_PATTERNS) {
+		SAFE_REGEXP_PATTERNS.delete(SAFE_REGEXP_PATTERNS.values().next().value);
+	}
+	SAFE_REGEXP_PATTERNS.add(pattern);
 }
 
 /**
@@ -383,30 +400,30 @@ function assertBoundedData(value, label) {
 	return { dataSize, dataNodes };
 }
 
-const BINARY_OPERATION_MAP = {
-	"+": (a, b) => a + b,
-	"-": (a, b) => a - b,
-	"*": (a, b) => a * b,
-	"**": (a, b) => a ** b,
-	"==": (a, b) => a == b,
-	"===": (a, b) => a === b,
-	"!=": (a, b) => a != b,
-	"!==": (a, b) => a !== b,
-	">": (a, b) => a > b,
-	">=": (a, b) => a >= b,
-	"<": (a, b) => a < b,
-	"<=": (a, b) => a <= b,
-	"%": (a, b) => a % b,
-	"/": (a, b) => a / b,
-	"|": (a, b) => a | b,
-	"&": (a, b) => a & b,
-	"^": (a, b) => a ^ b,
-	"<<": (a, b) => a << b,
-	">>": (a, b) => a >> b,
-	">>>": (a, b) => a >>> b,
-	in: (a, b) => a in b,
-	instanceof: (a, b) => a instanceof b,
-};
+const BINARY_OPERATION_MAP = new Map([
+	["+", (a, b) => a + b],
+	["-", (a, b) => a - b],
+	["*", (a, b) => a * b],
+	["**", (a, b) => a ** b],
+	["==", (a, b) => a == b],
+	["===", (a, b) => a === b],
+	["!=", (a, b) => a != b],
+	["!==", (a, b) => a !== b],
+	[">", (a, b) => a > b],
+	[">=", (a, b) => a >= b],
+	["<", (a, b) => a < b],
+	["<=", (a, b) => a <= b],
+	["%", (a, b) => a % b],
+	["/", (a, b) => a / b],
+	["|", (a, b) => a | b],
+	["&", (a, b) => a & b],
+	["^", (a, b) => a ^ b],
+	["<<", (a, b) => a << b],
+	[">>", (a, b) => a >> b],
+	[">>>", (a, b) => a >>> b],
+	["in", (a, b) => a in b],
+	["instanceof", (a, b) => a instanceof b],
+]);
 
 function createGlobalScope() {
 	const scope = Object.create(null);
@@ -819,8 +836,9 @@ export class Evaluator {
 			}
 		}
 
-		if (BINARY_OPERATION_MAP.hasOwnProperty(op)) {
-			return BINARY_OPERATION_MAP[op](left, right);
+		const apply = BINARY_OPERATION_MAP.get(op);
+		if (apply !== undefined) {
+			return apply(left, right);
 		}
 
 		throw new SyntaxError(`Unsupported operator: ${node.operator}`);
@@ -943,7 +961,11 @@ export class Evaluator {
 	 */
 	handleIdentifier(node) {
 		const name = node.name;
-		for (const scope of this.scopes) {
+		// Indexed loop: `for...of` allocates an iterator per lookup, and identifier
+		// resolution is the most frequent visitor call.
+		const scopes = this.scopes;
+		for (let i = 0; i < scopes.length; i++) {
+			const scope = scopes[i];
 			if (Object.hasOwn(scope, name)) {
 				return scope[name];
 			}
@@ -970,15 +992,6 @@ export class Evaluator {
 			throw new Error(renderErrorMessage(ERROR_MESSAGES.IS_NOT_ALLOWED, ["Accessing error stack"]));
 		}
 
-		// Prevent access to prototype properties. The comparison must be guarded
-		// against a null/undefined prototype: for a null-prototype object
-		// (`Object.create(null)`) `object[property]` and `object.__proto__` are
-		// both `undefined`, and `undefined === undefined` would otherwise reject
-		// every missing property with a misleading "prototype" error.
-		if (typeof object !== "undefined" && object !== null && object.__proto__ !== undefined && object[property] === object.__proto__) {
-			throw new Error(renderErrorMessage(ERROR_MESSAGES.IS_NOT_ALLOWED, ["Accessing prototype properties"]));
-		}
-
 		if (object === null || object === undefined) {
 			// optional chaining
 			if (node.optional) {
@@ -987,6 +1000,9 @@ export class Evaluator {
 			throw new TypeError(renderErrorMessage(ERROR_MESSAGES.CAN_NOT_READ_PROPERTY, [object, property]));
 		}
 
+		// Read the property once: the guards below all consume the same value, and a
+		// getter must not run (or run twice) just to be checked. Doing this after the
+		// null check also avoids touching `__proto__` on a null/undefined receiver.
 		const result = object[property];
 
 		// The Function constructor must never be reachable from an expression.
@@ -997,6 +1013,16 @@ export class Evaluator {
 		// final value can never be `Function` (or its prototype).
 		if (result === Function || result === Function.prototype) {
 			throw new Error(renderErrorMessage(ERROR_MESSAGES.IS_NOT_ALLOWED, ["Function constructor"]));
+		}
+
+		// Prevent access to prototype properties. The comparison must be guarded
+		// against a null/undefined prototype: for a null-prototype object
+		// (`Object.create(null)`) `object[property]` and `object.__proto__` are
+		// both `undefined`, and `undefined === undefined` would otherwise reject
+		// every missing property with a misleading "prototype" error.
+		const prototype = object.__proto__;
+		if (prototype !== undefined && result === prototype) {
+			throw new Error(renderErrorMessage(ERROR_MESSAGES.IS_NOT_ALLOWED, ["Accessing prototype properties"]));
 		}
 
 		return result;
@@ -1233,7 +1259,11 @@ export class Evaluator {
 					}
 					matchCount = countLiteralMatches(target, search, all);
 				} else if (search instanceof RegExp) {
-					matchCount = countRegExpMatches(target, search, all);
+					// `replace` with a *global* pattern also replaces every match, so it
+					// needs the full count just like `replaceAll` - otherwise a large
+					// replacement string is under-counted and the native engine allocates
+					// the whole expanded result before the boundary check.
+					matchCount = countRegExpMatches(target, search, all || search.flags.includes("g"));
 				} else {
 					matchCount = 0;
 				}
@@ -1246,6 +1276,12 @@ export class Evaluator {
 					throw new RangeError("Split result exceeds the maximum allowed length");
 				}
 				if (typeof args[0] === "string" && args[0] !== "" && countLiteralMatches(target, args[0], true) >= MAX_ARRAY_LENGTH) {
+					throw new RangeError("Split result exceeds the maximum allowed length");
+				}
+				// A RegExp separator splits on every match, so it must be bounded the
+				// same way as a string separator; otherwise `split(/a/)` on a large
+				// string builds an array far past the configured entry limit.
+				if (args[0] instanceof RegExp && countRegExpMatches(target, args[0], true) >= MAX_ARRAY_LENGTH) {
 					throw new RangeError("Split result exceeds the maximum allowed length");
 				}
 			}

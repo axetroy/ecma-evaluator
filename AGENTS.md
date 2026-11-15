@@ -24,7 +24,10 @@ expression evaluator built on acorn.
 - `pnpm run bench` — `node benchmark/index.mjs` (per-case ns/op).
 - `node benchmark/ab.mjs [git-ref]` — before/after comparison; materializes the
   baseline `src/Evaluator.js` from git into `benchmark/.baseline.generated.mjs`
-  (git-ignored) and imports it.
+  (git-ignored) and imports it. Both sides are warmed together and the timed
+  runs are interleaved, with the median of `AB_RUNS` (default 7) samples per
+  case; running one side fully before the other lets JIT/GC drift bias whichever
+  side goes second. Tune with `AB_ITERATIONS` / `AB_RUNS`.
 
 ## Architecture
 
@@ -41,8 +44,14 @@ expression evaluator built on acorn.
   call site (`assertSafeRegExpInvocation`) for the paths that bypass
   construction: a `RegExp` from the context, a string argument to
   `match`/`matchAll`/`search`, and the `RegExp.prototype[Symbol.*]` methods. It
-  is a heuristic, not a proof: it removes the demonstrated exploit class but
-  must not be treated as a hard guarantee.
+  detects two shapes: an unbounded quantifier over a body that itself contains
+  an unbounded quantifier (`(a+)+`), and an unbounded quantifier over an
+  alternation whose branches overlap — either as textual prefixes (`(a|ab)+`)
+  or through a shared first character (`(a|.)+`, `([ab]|a)+`, `(\w|a)+`). It is
+  a heuristic, not a proof: it does not catch polynomial blowup from *adjacent*
+  unbounded quantifiers (`.*.*x` is quadratic), so it must not be treated as a
+  hard time bound. Verified safe patterns are memoised in
+  `SAFE_REGEXP_PATTERNS` (bounded FIFO) so a repeated literal is screened once.
 - `src/*.d.ts` — hand-written, checked into source and copied to `dist` by a
   custom rslib plugin. They are NOT generated from the JSDoc in the `.js`
   files, so the two can drift (e.g. the constructor JSDoc omits `maxDepth`,
@@ -62,9 +71,11 @@ expression evaluator built on acorn.
 - Regex catastrophic backtracking is screened statically (`regExpSafety.js`)
   both before a pattern is constructed and again at the call site, because a
   pattern can reach a native method without passing construction (a context
-  `RegExp`, or a string argument to `match`/`matchAll`/`search`). This is a
-  heuristic, not a hard time bound: execution itself still has no time limit, so
-  do not evaluate untrusted patterns on a latency-sensitive thread.
+  `RegExp`, or a string argument to `match`/`matchAll`/`search`). It covers
+  nested quantifiers, overlapping alternations, and adjacent overlapping
+  quantifiers. This is a heuristic, not a hard time bound: execution itself
+  still has no time limit, so do not evaluate untrusted patterns on a
+  latency-sensitive thread.
 - `replace`/`replaceAll` reject `$&`-style replacements (for string *and* RegExp
   patterns) and bound the match count up front, because the native engine builds
   the whole expanded string before any post-hoc length check — a
