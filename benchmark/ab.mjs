@@ -20,7 +20,8 @@ const ref = process.argv[2] ?? "origin/master";
 const baselineSource = execFileSync("git", ["show", `${ref}:src/Evaluator.js`], { cwd: projectRoot, encoding: "utf8" })
 	// The baseline imports `./block.js`; point it at the real module so the
 	// materialized file does not need a sibling copy.
-	.replace('from "./block.js"', `from ${JSON.stringify(path.join(projectRoot, "src", "block.js"))}`);
+	.replace('from "./block.js"', `from ${JSON.stringify(path.join(projectRoot, "src", "block.js"))}`)
+	.replace('from "./regExpSafety.js"', `from ${JSON.stringify(path.join(projectRoot, "src", "regExpSafety.js"))}`);
 
 const baselineFile = path.join(here, ".baseline.generated.mjs");
 fs.writeFileSync(baselineFile, baselineSource);
@@ -38,19 +39,22 @@ const CASES = [
 	["array literal", "[1, 2, 3, 4, 5]", {}],
 	["object literal", "({ x: 1, y: 2, z: a + b })", { a: 1, b: 2 }],
 	["array map/reduce", "[1,2,3,4,5].map(v => v * 2).reduce((acc, v) => acc + v, 0)", {}],
+	["regex literal test", "/^[a-z]+$/.test(name)", { name: "ada" }],
+	["regex literal replace", "text.replace(/o/g, '0')", { text: "hello world" }],
 ];
 
 const iterations = Number(process.env.AB_ITERATIONS ?? 200000);
+const RUNS = Number(process.env.AB_RUNS ?? 7);
 
-function time(fn) {
-	for (let i = 0; i < Math.min(iterations, 20000); i++) fn();
-	let best = Infinity;
-	for (let run = 0; run < 3; run++) {
-		const start = process.hrtime.bigint();
-		for (let i = 0; i < iterations; i++) fn();
-		best = Math.min(best, Number(process.hrtime.bigint() - start) / iterations);
-	}
-	return best;
+function median(samples) {
+	samples.sort((a, b) => a - b);
+	return samples[(samples.length - 1) >> 1];
+}
+
+function timeOne(fn) {
+	const start = process.hrtime.bigint();
+	for (let i = 0; i < iterations; i++) fn();
+	return Number(process.hrtime.bigint() - start) / iterations;
 }
 
 console.log(`baseline: ${ref}`);
@@ -60,8 +64,23 @@ let ratioSum = 0;
 for (const [name, expr, context] of CASES) {
 	const baseline = new BaselineEvaluator(context);
 	const current = new NewEvaluator(context);
-	const before = time(() => baseline.evaluate(expr));
-	const after = time(() => current.evaluate(expr));
+	const beforeFn = () => baseline.evaluate(expr);
+	const afterFn = () => current.evaluate(expr);
+	// Warm both up together so neither side pays JIT/parse-cache costs the other
+	// avoids, then alternate the timed runs and keep the median of an odd number
+	// of samples so a single GC pause cannot skew one side.
+	for (let i = 0; i < Math.min(iterations, 20000); i++) {
+		beforeFn();
+		afterFn();
+	}
+	const beforeSamples = [];
+	const afterSamples = [];
+	for (let run = 0; run < RUNS; run++) {
+		beforeSamples.push(timeOne(beforeFn));
+		afterSamples.push(timeOne(afterFn));
+	}
+	const before = median(beforeSamples);
+	const after = median(afterSamples);
 	ratioSum += before / after;
 	console.log(name.padEnd(20), before.toFixed(0).padStart(9), after.toFixed(0).padStart(9), `${(before / after).toFixed(2)}x`.padStart(9));
 }

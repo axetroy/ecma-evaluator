@@ -11,7 +11,7 @@ The evaluator accepts expressions and semicolon-separated expression sequences. 
 | Literals and data | Numbers, strings, booleans, `null`, `undefined`, arrays, and parenthesized object literals |
 | Operators | Arithmetic, comparison, equality, logical, nullish-coalescing, bitwise, unary, and ternary operators |
 | Access | Dot access, computed access, and optional chaining |
-| Functions | Arrow functions and calls to exposed functions/methods |
+| Functions | Arrow functions (simple identifier parameters only) and calls to exposed functions/methods |
 | Other expressions | Template literals and `new` expressions for exposed constructors |
 
 ```js
@@ -36,7 +36,7 @@ The evaluator blocks mutating methods on arrays, objects, collections, dates, ty
 
 The input context is checked before cloning; enumerable accessor properties are rejected without invoking their getters. The result is cloned before it is returned. Both must be supported by `structuredClone`; functions, promises, DOM nodes, weak collections, and symbols cannot be passed as context values or returned. Input length, AST visits, recursion depth, data size, array/buffer construction, intermediate callback allocations, template expression count, and output length are bounded.
 
-Evaluation is synchronous. Resource budgets do not interrupt a native operation after it starts; in particular, regular expressions have no execution-time limit and may block the main thread. Do not run untrusted expressions on a latency-sensitive main thread or treat the evaluator as a general-purpose isolation boundary.
+Evaluation is synchronous. Resource budgets do not interrupt a native operation after it starts; in particular, regular expressions have no execution-time limit and may block the main thread. Regex literals, `RegExp(...)` / `new RegExp(...)` constructions, context-supplied `RegExp` values, and string arguments to `String.prototype.match`/`matchAll`/`search` are screened for common catastrophic-backtracking shapes before use, but this is a heuristic and not a hard bound. Do not run untrusted expressions on a latency-sensitive main thread or treat the evaluator as a general-purpose isolation boundary.
 
 ## Errors
 

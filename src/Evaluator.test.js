@@ -347,6 +347,54 @@ describe("Data Types", () => {
 			assert.equal(evaluator.evaluate('/hello/i.test("HELLO")'), true);
 			assert.equal(evaluator.evaluate('new RegExp("world", "i").test(str)'), true);
 		});
+
+		test("should reject catastrophic-backtracking regex literals", () => {
+			const evaluator = new Evaluator({ s: "a".repeat(40) + "!" });
+			const patterns = ["/^(a+)+$/", "/^(a|ab)+$/", "/^(\\d+)*$/", "/^([a-z]+)*$/", "/^(a*b+)+$/"];
+			for (const pattern of patterns) {
+				assert.throws(() => evaluator.evaluate(`${pattern}.test(s)`), /catastrophic backtracking/);
+				assert.throws(() => evaluator.evaluate(`s.match(${pattern})`), /catastrophic backtracking/);
+			}
+		});
+
+		test("should reject catastrophic-backtracking RegExp construction", () => {
+			const evaluator = new Evaluator({});
+			assert.throws(() => evaluator.evaluate('new RegExp("^(a+)+$")'), /catastrophic backtracking/);
+			assert.throws(() => evaluator.evaluate('RegExp("^(a+)+$")'), /catastrophic backtracking/);
+			assert.throws(() => evaluator.evaluate('new RegExp("(a|ab)+")'), /catastrophic backtracking/);
+		});
+
+		test("should screen regexes that reach a method without construction", () => {
+			// A RegExp in the context is cloned in verbatim; a string argument to
+			// match/matchAll/search is compiled by the host internally. Both bypass
+			// the literal and `RegExp()` screens, so the call site must re-check.
+			const evaluator = new Evaluator({ s: "a".repeat(28) + "!", re: /(a+)+b/ });
+			assert.throws(() => evaluator.evaluate("s.match(re)"), /catastrophic backtracking/);
+			assert.throws(() => evaluator.evaluate('s.match("(a+)+b")'), /catastrophic backtracking/);
+			assert.throws(() => evaluator.evaluate('s.search("(a+)+b")'), /catastrophic backtracking/);
+			assert.throws(() => evaluator.evaluate("s.split(/(a+)+b/)"), /catastrophic backtracking/);
+			assert.throws(() => evaluator.evaluate('"a1".replace(/(a+)+b/, "x")'), /catastrophic backtracking/);
+		});
+
+		test("should screen a context RegExp reached through a Symbol method", () => {
+			// `re[Symbol.match](s)` and friends run the receiver's pattern through a
+			// distinct function object that `test`/`exec` checks do not cover.
+			const evaluator = new Evaluator({ s: "a".repeat(28) + "!", re: /(a+)+b/ });
+			for (const code of ["re[Symbol.match](s)", "re[Symbol.search](s)", "re[Symbol.split](s)", "[...re[Symbol.matchAll](s)]"]) {
+				assert.throws(() => evaluator.evaluate(code), /catastrophic backtracking/, code);
+			}
+			assert.equal(evaluator.evaluate('"aXb".match(/X/)[0]'), "X");
+		});
+
+		test("should still allow legitimate regex patterns", () => {
+			const evaluator = new Evaluator({ str: "Hello World 123" });
+			assert.equal(evaluator.evaluate("/\\d+/.test(str)"), true);
+			assert.equal(evaluator.evaluate("/[a-z]+/i.test(str)"), true);
+			assert.equal(evaluator.evaluate("/^(a|b)+$/.test(\"abba\")"), true);
+			assert.equal(evaluator.evaluate("/(?:ab)+/.test(\"abab\")"), true);
+			assert.equal(evaluator.evaluate('new RegExp("a{2,5}").test("aaa")'), true);
+			assert.equal(evaluator.evaluate('new RegExp("(foo|bar)+").test("foobar")'), true);
+		});
 	});
 
 	describe("Boolean", () => {
@@ -610,6 +658,16 @@ describe("Functions", () => {
 			assert.throws(() => evaluator.evaluate("((...args) => args.length)(1, 2, 3)"));
 			assert.equal(evaluator.evaluate("((a, b, c) => [a, b, c].length)(1, 2, 3)"), 3);
 			assert.deepEqual(evaluator.evaluate("((a, b, c) => [a, b, c])(1, 2, 3)"), [1, 2, 3]);
+		});
+
+		test("should reject destructuring, default, and rest parameters instead of mis-binding", () => {
+			// A non-identifier parameter is not an Identifier node, so it has no
+			// `.name`. Before this was rejected the binding was written to a property
+			// literally named "undefined", which both mis-bound the argument and
+			// shadowed the `undefined` global inside the body.
+			for (const expression of ["(({a}) => a)({a: 1})", "(([a]) => a)([1])", "((a = 5) => a)()", "((...rest) => rest)(1)", "(({a}) => undefined)({a: 1})"]) {
+				assert.throws(() => evaluator.evaluate(expression), { name: "SyntaxError" }, expression);
+			}
 		});
 	});
 
@@ -1101,6 +1159,20 @@ describe("Security and Restrictions", () => {
 			}
 		});
 
+		test("should report a non-function callee when Error.prepareStackTrace is undefined", () => {
+			// On runtimes that leave Error.prepareStackTrace undefined (Node 18
+			// and 24), a bare `func === Error.prepareStackTrace` identity test
+			// also matched an `undefined` callee and masked the real error.
+			const original = Error.prepareStackTrace;
+			try {
+				Error.prepareStackTrace = undefined;
+				const evaluator = new Evaluator({ foo: {} });
+				assert.throws(() => evaluator.evaluate("foo.missing()"), { message: "foo.missing is not a function" });
+			} finally {
+				Error.prepareStackTrace = original;
+			}
+		});
+
 		test("should block reading .stack on Error instances", () => {
 			// Reading `.stack` materializes the stack, which internally invokes
 			// a host-installed Error.prepareStackTrace with sandbox-owned
@@ -1388,6 +1460,16 @@ describe("Security and Restrictions", () => {
 			assert.throws(() => evaluator.evaluate("1 + 2 + 3"), { message: "Evaluation step limit exceeded" });
 		});
 
+		test("should recover the step budget after a limit is exceeded", () => {
+			const evaluator = new Evaluator({}, { maxEvaluationSteps: 4 });
+			assert.throws(() => evaluator.evaluate("1 + 2 + 3"), { message: "Evaluation step limit exceeded" });
+			// A thrown limit must not corrupt the instance: the next evaluate()
+			// and a direct execute() both start from a fresh budget.
+			assert.equal(evaluator.evaluate("1 + 2"), 3);
+			assert.equal(evaluator.execute([{ type: "Literal", value: 42, raw: "42" }]), 42);
+			assert.equal(evaluator.evaluate("1 + 2"), 3);
+		});
+
 		test("should bound context strings, arrays, buffers, and node count", () => {
 			assert.throws(() => new Evaluator({ text: "x".repeat(100001) }), /maximum length/);
 			assert.throws(() => new Evaluator({ values: new Array(10001) }), /maximum length/);
@@ -1418,6 +1500,19 @@ describe("Security and Restrictions", () => {
 			assert.throws(() => evaluator.evaluate('"x".padEnd(100001)'), /maximum allowed length/);
 			assert.throws(() => evaluator.evaluate('"a".concat("x".repeat(100000), "y")'), /maximum allowed length/);
 			assert.throws(() => evaluator.evaluate('"aa".replaceAll("a", "x".repeat(100000))'), /maximum allowed length/);
+			// A RegExp pattern with a `$&`-style replacement expands against the
+			// matched text, so the native engine can allocate an arbitrarily large
+			// string before any post-hoc length check. This must be rejected for
+			// regex patterns exactly as it is for string patterns.
+			assert.throws(() => evaluator.evaluate('"a".repeat(100000).replace(/a/g, "$&$&$&$&$&")'), /Only literal string replacements/);
+			assert.throws(() => evaluator.evaluate('"a".repeat(100000).replace(/a/, "x".repeat(100000))'), /maximum allowed length/);
+			// A *global* regexp in `replace` also replaces every match, so the bound
+			// must count them all; otherwise a large replacement is under-counted.
+			assert.throws(() => evaluator.evaluate('"a".repeat(1000).replace(/a/g, "x".repeat(50000))'), /maximum allowed length/);
+			// A RegExp separator in `split` produces one entry per match, so it must
+			// be bounded exactly like the string-separator path.
+			assert.throws(() => evaluator.evaluate('"a".repeat(100000).split(/a/)'), /maximum allowed length/);
+			assert.throws(() => evaluator.evaluate('"abc".replace(/b/, () => "X")'), /Only literal string replacements/);
 			assert.throws(() => evaluator.evaluate("2n ** 257n"), /BigInt exponent/);
 			assert.throws(() => evaluator.evaluate("1n << 65537n"), /BigInt result/);
 		});

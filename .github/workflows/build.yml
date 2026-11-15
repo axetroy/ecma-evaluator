@@ -7,7 +7,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        node: ["22"]
+        node: ["18", "20", "22"]
         os: [ubuntu-latest, macOS-latest, windows-latest]
     name: node.js ${{ matrix.node }} test in ${{ matrix.os }}
     steps:
@@ -27,5 +27,12 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Typecheck
+        run: pnpm run typecheck
+
       - name: Test
         run: pnpm run test
+
+      - name: Validate published package
+        if: matrix.node == '22' && matrix.os == 'ubuntu-latest'
+        run: pnpm run lint:publish && pnpm run lint:types

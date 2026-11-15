@@ -18,19 +18,22 @@
         },
         ".": {
             "require": {
-                "default": "./dist/cjs/index.cjs",
-                "types": "./dist/cjs/index.d.cts"
+                "types": "./dist/cjs/index.d.cts",
+                "default": "./dist/cjs/index.cjs"
             },
             "import": {
-                "default": "./dist/esm/index.mjs",
-                "types": "./dist/esm/index.d.mts"
+                "types": "./dist/esm/index.d.mts",
+                "default": "./dist/esm/index.mjs"
             }
         }
     },
     "scripts": {
-        "test": "node --test \"**/*.test.{js,mjs}\"",
+        "test": "node --test",
+        "typecheck": "tsc --noEmit",
         "bench": "node benchmark/index.mjs",
-        "test:update-snapshots": "node --test-update-snapshots --test \"**/*.test.{js,mjs}\"",
+        "test:update-snapshots": "node --test-update-snapshots --test",
+        "lint:publish": "publint",
+        "lint:types": "attw --pack .",
         "build": "knip && rslib build",
         "docs:dev": "vitepress dev docs",
         "docs:build": "vitepress build docs",
@@ -45,12 +48,14 @@
         "node": ">=18"
     },
     "devDependencies": {
+        "@arethetypeswrong/cli": "^0.18.5",
         "@changesets/cli": "2.31.1",
         "@rslib/core": "^0.18.0",
         "@types/node": "^22.14.1",
         "capture-stdio.js": "^1.0.2",
         "knip": "^5.53.0",
         "monaco-editor": "^0.57.0",
+        "publint": "^0.3.25",
         "typescript": "^5.9.3",
         "vitepress": "1.6.4"
     },
