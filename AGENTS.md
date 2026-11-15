@@ -5,7 +5,7 @@ expression evaluator built on acorn.
 
 ## Commands
 
-- `pnpm run test` — `node --test` (239 tests). The runner's default discovery
+- `pnpm run test` — `node --test` (245 tests). The runner's default discovery
   picks up every `*.test.js` / `*.test.mjs` under the workspace, including
   `test/dist.test.js`, which runs `pnpm run build` and the `fixtures/`
   package-resolution checks in a `before` hook. Do NOT use an explicit glob
@@ -34,7 +34,9 @@ expression evaluator built on acorn.
 - `src/Evaluator.js` — the interpreter. `parseExpression` (bounded FIFO AST
   cache) → `evaluate()` → `execute()` → `visit(node)` (single switch dispatch).
   The AST is treated as immutable, which is what makes the shared parse cache
-  safe across instances.
+  safe across instances. Arrow functions accept simple identifier parameters
+  only; a destructuring/default/rest parameter is rejected (its node has no
+  `.name`, so it used to be bound to a property literally named "undefined").
 - `src/index.js` — package entry: `evalExpression`, `evalTemplate` (reuses one
   `Evaluator` across a template's expressions).
 - `src/block.js` — the mutable-method blocklist.
@@ -44,14 +46,18 @@ expression evaluator built on acorn.
   call site (`assertSafeRegExpInvocation`) for the paths that bypass
   construction: a `RegExp` from the context, a string argument to
   `match`/`matchAll`/`search`, and the `RegExp.prototype[Symbol.*]` methods. It
-  detects two shapes: an unbounded quantifier over a body that itself contains
-  an unbounded quantifier (`(a+)+`), and an unbounded quantifier over an
-  alternation whose branches overlap — either as textual prefixes (`(a|ab)+`)
-  or through a shared first character (`(a|.)+`, `([ab]|a)+`, `(\w|a)+`). It is
-  a heuristic, not a proof: it does not catch polynomial blowup from *adjacent*
-  unbounded quantifiers (`.*.*x` is quadratic), so it must not be treated as a
-  hard time bound. Verified safe patterns are memoised in
-  `SAFE_REGEXP_PATTERNS` (bounded FIFO) so a repeated literal is screened once.
+  detects three shapes: an unbounded quantifier over a body that itself contains
+  an unbounded quantifier (`(a+)+`); an unbounded quantifier over an alternation
+  whose branches overlap — either as textual prefixes (`(a|ab)+`) or through a
+  shared first character (`(a|.)+`, `([ab]|a)+`, `(\w|a)+`); and adjacent
+  unbounded quantifiers over overlapping characters (`.*.*x`, `a*a*b`,
+  `(a*)(a*)b`), which backtrack polynomially. It is a heuristic, not a proof:
+  it can reject a safe pattern and it does not cover every ReDoS shape, so it
+  must not be treated as a hard time bound. Verified safe patterns are memoised
+  in `SAFE_REGEXP_PATTERNS` (bounded FIFO) so a repeated literal is screened
+  once. The screen models `\d`/`\w`/`\s`, non-negated classes and ranges as
+  concrete character sets, so disjoint quantifiers such as `\s*\w+` are not
+  false-flagged.
 - `src/*.d.ts` — hand-written, checked into source and copied to `dist` by a
   custom rslib plugin. They are NOT generated from the JSDoc in the `.js`
   files, so the two can drift (e.g. the constructor JSDoc omits `maxDepth`,
